@@ -35,6 +35,50 @@ const defaultSettings: Settings = {
   feishu_app_secret: '',
 }
 
+function DocSyncSection() {
+  const [running, setRunning] = useState(false)
+  const [log, setLog] = useState<string[]>([])
+  const [result, setResult] = useState<any>(null)
+  const logRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  }, [log])
+
+  const handleSync = async () => {
+    setRunning(true); setLog([]); setResult(null)
+    await fetch('/api/feishu-docs', { method: 'POST' })
+    const poll = setInterval(async () => {
+      const s = await fetch('/api/feishu-docs').then(r => r.json())
+      setLog(s.log || [])
+      if (!s.running) { clearInterval(poll); setRunning(false); setResult(s.lastResult) }
+    }, 1500)
+  }
+
+  return (
+    <Section title="04 飞书文档同步">
+      <p className="text-gray-500 text-sm mb-4">
+        同步飞书云文档内容到本地，需开通 <code className="text-purple-400">drive:drive:readonly</code> 和 <code className="text-purple-400">docx:document:readonly</code> 用户身份权限。
+      </p>
+      <div className="flex items-center gap-3 mb-4">
+        <button onClick={handleSync} disabled={running}
+          className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors disabled:opacity-50">
+          {running ? '同步中...' : '同步文档'}
+        </button>
+        {result && !result.error && (
+          <span className="text-sm text-gray-400">共 <span className="text-green-400 font-mono">{result.synced}</span> 个文档</span>
+        )}
+      </div>
+      {log.length > 0 && (
+        <div ref={logRef} className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-3 h-36 overflow-y-auto font-mono text-xs text-gray-400 space-y-0.5">
+          {log.map((l, i) => <div key={i}>{l}</div>)}
+          {running && <div className="text-blue-400 animate-pulse">同步中...</div>}
+        </div>
+      )}
+    </Section>
+  )
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-6">
@@ -445,8 +489,11 @@ export default function ConfigPage() {
           )}
         </Section>
 
-        {/* ── 04 聊天记录 ── */}
-        <Section title="04 聊天记录">
+        {/* ── 04 飞书文档同步 ── */}
+        <DocSyncSection />
+
+        {/* ── 05 聊天记录 ── */}
+        <Section title="05 聊天记录">
           <div className="flex gap-2 mb-4">
             <select
               value={msgContact}
@@ -486,8 +533,8 @@ export default function ConfigPage() {
           )}
         </Section>
 
-        {/* ── 05 权限 + SMTP ── */}
-        <Section title="05 权限 + SMTP 配置">
+        {/* ── 06 权限 + SMTP ── */}
+        <Section title="06 权限 + SMTP 配置">
           <div className="mb-5">
             <p className="text-gray-400 text-xs mb-2">发送权限</p>
             <div className="flex gap-3">
@@ -524,8 +571,8 @@ export default function ConfigPage() {
           </button>
         </Section>
 
-        {/* ── 06 安装命令 ── */}
-        <Section title="06 安装 MCP Server">
+        {/* ── 07 安装命令 ── */}
+        <Section title="07 安装 MCP Server">
           <p className="text-gray-400 text-sm mb-3">复制以下命令到终端，完成 agent 安装：</p>
           <div className="relative bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg px-4 py-3 font-mono text-sm text-green-400 overflow-x-auto">
             <pre className="whitespace-pre-wrap break-all">{installCmd}</pre>

@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { getContacts } from './tools/get_contacts'
 import { getStats } from './tools/get_stats'
 import { getSummaries } from './tools/get_summaries'
+import { getDocSummaries } from './tools/get_doc_summaries'
 import { getDb } from './db'
 import { getHistory } from './tools/get_history'
 import { sendEmail } from './tools/send_email'
@@ -52,6 +53,22 @@ server.tool(
     ).join('\n\n---\n\n')
     return {
       content: [{ type: 'text', text: `共 ${summaries.length} 个会话摘要：\n\n${text}` }],
+    }
+  }
+)
+
+// ── Tool: get_doc_summaries ───────────────────────────
+server.tool(
+  'get_doc_summaries',
+  '获取飞书文档摘要列表，可按关键词搜索标题或内容，用于快速定位相关文档',
+  { search: z.string().optional().describe('按标题或内容关键词搜索') },
+  async ({ search }) => {
+    const docs = getDocSummaries(search)
+    const text = docs.map(d =>
+      `【${d.title}】(${d.doc_type}) ${d.modified_time?.slice(0, 10)}\n${d.summary || '暂无摘要'}\n${d.url}`
+    ).join('\n\n---\n\n')
+    return {
+      content: [{ type: 'text', text: `共 ${docs.length} 个文档：\n\n${text}` }],
     }
   }
 )
