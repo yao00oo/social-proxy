@@ -1,0 +1,21 @@
+# Database (contains private messages)
+*.db
+*.db-shm
+*.db-wal
+
+# Dependencies
+node_modules/
+mcp-server/node_modules/
+config-ui/node_modules/
+
+# Build output
+mcp-server/dist/
+config-ui/.next/
+
+# Env
+.env.local
+.env
+
+# Logs
+*.log
+nohup.out
