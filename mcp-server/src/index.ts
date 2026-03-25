@@ -14,6 +14,7 @@ import { sendEmail } from './tools/send_email'
 import { sendFeishuMessage } from './tools/send_feishu_message'
 import { searchMessages } from './tools/search_messages'
 import { getNewMessages, markMessagesRead } from './tools/get_new_messages'
+import { getApprovalTasks, getApprovalDetail } from './tools/get_approvals'
 
 const server = new McpServer({
   name: 'social-proxy',
@@ -177,7 +178,7 @@ server.tool(
 // ── Tool: get_new_messages ────────────────────────────
 server.tool(
   'get_new_messages',
-  '获取最近N分钟的飞书消息（含聊天上下文）。is_at_me=true 表示消息@了我或回复了我的消息，需要优先处理。处理完后可调用 mark_messages_read 标记已读。',
+  '获取最近N分钟的飞书消息（含聊天上下文）。获取到消息后，你必须：1）逐条分析每条消息的内容，给出摘要和要点解读；2）对群聊消息归纳讨论主题和关键结论；3）标注需要用户关注或回复的内容；4）is_at_me=true 的消息需要优先处理并建议回复。处理完后调用 mark_messages_read 标记已读。',
   {
     minutes: z.number().optional().describe('时间窗口（分钟），默认5'),
     limit: z.number().optional().describe('返回条数，默认50'),
@@ -213,16 +214,53 @@ server.tool(
   }
 )
 
+// ── Tool: get_approvals ──────────────────────────────
+server.tool(
+  'get_approvals',
+  '查询飞书审批任务。topic=1 待审批，topic=2 已审批，topic=3 我发起的。返回任务列表，用 instance_code 可查看详情。',
+  {
+    topic: z.number().optional().describe('1=待审批（默认），2=已审批，3=我发起的'),
+    limit: z.number().optional().describe('返回数量，默认20，最大200'),
+  },
+  async ({ topic, limit }) => {
+    const tasks = await getApprovalTasks(topic ?? 1, limit ?? 20)
+    if (tasks.length === 0) {
+      return { content: [{ type: 'text', text: '没有审批任务' }] }
+    }
+    const text = tasks.map((t, i) =>
+      `${i + 1}. 【${t.title}】发起人：${t.initiator_name} | ${t.create_time} | 状态：${t.status}\n   instance_code: ${t.instance_code}`
+    ).join('\n\n')
+    return { content: [{ type: 'text', text: `共 ${tasks.length} 条：\n\n${text}` }] }
+  }
+)
+
+// ── Tool: get_approval_detail ───────────────────────
+server.tool(
+  'get_approval_detail',
+  '获取审批实例详情：表单数据、附件文件、审批节点。附件会返回下载链接（12小时有效）。拿到详情后必须：1）解读所有表单字段；2）如有附件自动下载并解读内容，不要问用户是否需要；3）给出审批进度和需要关注的事项。',
+  {
+    instance_code: z.string().describe('审批实例 code，从 get_approvals 返回的列表中获取'),
+  },
+  async ({ instance_code }) => {
+    const detail = await getApprovalDetail(instance_code)
+    return {
+      content: [{ type: 'text', text: JSON.stringify(detail, null, 2) }],
+    }
+  }
+)
+
 // ── 启动 ──────────────────────────────────────────────
 import { quickSync } from './feishu/sync'
+import { syncDocs } from './feishu/docs'
 
 let _syncInterval: ReturnType<typeof setInterval> | null = null
+let _docSyncInterval: ReturnType<typeof setInterval> | null = null
 
 async function main() {
   const transport = new StdioServerTransport()
   await server.connect(transport)
 
-  // 定时增量同步（每60秒拉一次最近活跃聊天的新消息）
+  // 消息增量同步（每60秒）
   _syncInterval = setInterval(async () => {
     try {
       const r = await quickSync()
@@ -231,7 +269,18 @@ async function main() {
       console.error(`[增量同步] 出错: ${e.message}`)
     }
   }, 60000)
-  console.error('[social-proxy] MCP Server 已启动，增量同步每60秒运行')
+
+  // 文档同步（每30分钟）
+  _docSyncInterval = setInterval(async () => {
+    try {
+      const r = await syncDocs()
+      console.error(`[文档同步] ${r.synced} 个文档`)
+    } catch (e: any) {
+      console.error(`[文档同步] 出错: ${e.message}`)
+    }
+  }, 30 * 60 * 1000)
+
+  console.error('[social-proxy] MCP Server 已启动，消息60s/文档30min自动同步')
 }
 
 main().catch((err) => {
