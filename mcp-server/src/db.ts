@@ -67,6 +67,21 @@ function initSchema(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_feishu_users_name ON feishu_users(name);
 
+    -- 飞书云文档表
+    CREATE TABLE IF NOT EXISTS feishu_docs (
+      doc_id        TEXT PRIMARY KEY,
+      title         TEXT NOT NULL,
+      doc_type      TEXT,
+      url           TEXT,
+      created_time  TEXT,
+      modified_time TEXT,
+      content       TEXT,
+      summary       TEXT,
+      synced_at     TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_feishu_docs_modified ON feishu_docs(modified_time);
+    CREATE INDEX IF NOT EXISTS idx_feishu_docs_title ON feishu_docs(title);
+
     -- 实时消息回复建议表
     CREATE TABLE IF NOT EXISTS reply_suggestions (
       id               INTEGER PRIMARY KEY AUTOINCREMENT,
