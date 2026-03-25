@@ -61,6 +61,19 @@ server.tool(
   }
 )
 
+// ── Tool: sync_doc ──────────────────────────────────
+import { syncDocByUrl } from './feishu/docs'
+
+server.tool(
+  'sync_doc',
+  '手动同步一个飞书文档/wiki到本地数据库。传入飞书文档URL，自动识别并同步内容。',
+  { url: z.string().describe('飞书文档或wiki的URL') },
+  async ({ url }) => {
+    const result = await syncDocByUrl(url)
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] }
+  }
+)
+
 // ── Tool: get_doc_summaries ───────────────────────────
 server.tool(
   'get_doc_summaries',
@@ -178,7 +191,7 @@ server.tool(
 // ── Tool: get_new_messages ────────────────────────────
 server.tool(
   'get_new_messages',
-  '获取最近N分钟的飞书消息（含聊天上下文）。获取到消息后，你必须：1）逐条分析每条消息的内容，给出摘要和要点解读；2）对群聊消息归纳讨论主题和关键结论；3）标注需要用户关注或回复的内容；4）is_at_me=true 的消息需要优先处理并建议回复。处理完后调用 mark_messages_read 标记已读。',
+  '获取最近N分钟的飞书消息（含聊天上下文）。\n\n⚠️ 严格要求：拿到消息后，你必须先完整输出每条消息的解读分析，然后才能调用 mark_messages_read。禁止跳过解读直接标记已读。\n\n解读要求：\n1）逐条展示消息内容并分析含义\n2）群聊消息归纳讨论主题和关键结论\n3）标注需要用户关注或回复的内容\n4）is_at_me=true 的消息优先处理并建议回复\n5）所有解读输出完毕后，最后再调用 mark_messages_read',
   {
     minutes: z.number().optional().describe('时间窗口（分钟），默认5'),
     limit: z.number().optional().describe('返回条数，默认50'),
@@ -204,7 +217,7 @@ server.tool(
 // ── Tool: mark_messages_read ──────────────────────────
 server.tool(
   'mark_messages_read',
-  '将指定 ID 的消息标记为已读（处理完后调用，避免重复提示）',
+  '将消息标记为已读。⚠️ 只能在你已经向用户输出了消息解读分析之后才能调用此工具。如果你还没有解读消息内容，禁止调用。',
   {
     ids: z.array(z.number()).describe('要标记已读的消息 ID 列表'),
   },

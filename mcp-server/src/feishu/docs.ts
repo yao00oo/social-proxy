@@ -113,11 +113,113 @@ export async function listSharedDocs(userToken: string): Promise<DocInfo[]> {
   return docs
 }
 
+// 3) 遍历所有 wiki 知识库空间的节点
+export async function listWikiDocs(userToken: string, onProgress?: (msg: string) => void): Promise<DocInfo[]> {
+  const docs: DocInfo[] = []
+
+  // 先获取所有 space
+  const spaces: string[] = []
+  let pageToken = ''
+  while (true) {
+    const params: Record<string, string> = { page_size: '50' }
+    if (pageToken) params.page_token = pageToken
+    const res = await get('/wiki/v2/spaces', userToken, params)
+    if (res.code !== 0) break
+    for (const s of res.data?.items || []) spaces.push(s.space_id)
+    if (!res.data?.has_more) break
+    pageToken = res.data.page_token
+  }
+
+  // 递归遍历每个 space 的节点树
+  async function fetchNodes(spaceId: string, parentToken?: string) {
+    let pt = ''
+    while (true) {
+      const params: Record<string, string> = { page_size: '50' }
+      if (parentToken) params.parent_node_token = parentToken
+      if (pt) params.page_token = pt
+      const res = await get(`/wiki/v2/spaces/${spaceId}/nodes`, userToken, params)
+      if (res.code !== 0) break
+      for (const n of res.data?.items || []) {
+        if (n.obj_token && n.title) {
+          docs.push({
+            doc_id: n.obj_token,
+            title: n.title,
+            doc_type: n.obj_type || 'wiki',
+            url: `https://wh9a7emh1y.feishu.cn/wiki/${n.node_token}`,
+            modified_time: n.obj_edit_time ? new Date(parseInt(n.obj_edit_time) * 1000).toISOString().slice(0, 19).replace('T', ' ') : '',
+            created_time: n.obj_create_time ? new Date(parseInt(n.obj_create_time) * 1000).toISOString().slice(0, 19).replace('T', ' ') : '',
+          })
+        }
+        // 递归子节点
+        if (n.has_child && n.node_token) {
+          await fetchNodes(spaceId, n.node_token)
+        }
+      }
+      if (!res.data?.has_more) break
+      pt = res.data.page_token
+    }
+  }
+
+  for (const spaceId of spaces) {
+    onProgress?.(`  遍历知识库 ${spaceId}...`)
+    await fetchNodes(spaceId)
+  }
+
+  return docs
+}
+
 // 获取文档纯文本内容（仅支持 docx 类型）
 export async function getDocContent(userToken: string, docId: string): Promise<string> {
   const res = await get(`/docx/v1/documents/${docId}/raw_content`, userToken)
   if (res.code !== 0) return ''
   return res.data?.content || ''
+}
+
+// 根据飞书 URL 手动同步单个文档
+export async function syncDocByUrl(url: string): Promise<{ ok: boolean; title?: string; doc_type?: string; error?: string }> {
+  const db = getDb()
+  const token = (db.prepare(`SELECT value FROM settings WHERE key='feishu_user_access_token'`).get() as any)?.value
+  if (!token) return { ok: false, error: '未授权' }
+
+  // 从 URL 提取 token
+  const m = url.match(/feishu\.cn\/(?:wiki|docx|doc|sheet|bitable|mindnote)\/([A-Za-z0-9]+)/)
+  if (!m) return { ok: false, error: '无法识别飞书文档URL' }
+  const docToken = m[1]
+  const isWiki = url.includes('/wiki/')
+
+  let info: DocInfo | null = null
+
+  if (isWiki) {
+    // wiki 文档需要先 get_node 拿 obj_token
+    info = await getWikiNode(token, docToken)
+    if (!info) return { ok: false, error: '无法访问该 wiki 文档' }
+  } else {
+    // 普通云文档直接用 token
+    info = {
+      doc_id: docToken,
+      title: '',
+      doc_type: url.includes('/docx/') ? 'docx' : url.includes('/sheet/') ? 'sheet' : 'unknown',
+      url,
+      modified_time: '',
+      created_time: '',
+    }
+  }
+
+  let content = ''
+  if (info.doc_type === 'docx') {
+    try { content = await getDocContent(token, info.doc_id) } catch {}
+  }
+
+  db.prepare(`
+    INSERT INTO feishu_docs(doc_id, title, doc_type, url, created_time, modified_time, content, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(doc_id) DO UPDATE SET
+      title = CASE WHEN excluded.title != '' THEN excluded.title ELSE feishu_docs.title END,
+      content = CASE WHEN excluded.content != '' THEN excluded.content ELSE feishu_docs.content END,
+      synced_at = excluded.synced_at
+  `).run(info.doc_id, info.title, info.doc_type, info.url || url, info.created_time, info.modified_time, content)
+
+  return { ok: true, title: info.title, doc_type: info.doc_type }
 }
 
 export async function syncDocs(onProgress?: (msg: string) => void): Promise<{ total: number; synced: number; errors: string[] }> {
@@ -137,10 +239,18 @@ export async function syncDocs(onProgress?: (msg: string) => void): Promise<{ to
   const sharedDocs = await listSharedDocs(token)
   log(`  协作文档: ${sharedDocs.length} 个`)
 
+  // 2.5) 遍历 wiki 知识库
+  log('📚 遍历知识库...')
+  const wikiDocs = await listWikiDocs(token, onProgress)
+  log(`  知识库文档: ${wikiDocs.length} 个`)
+
   // 合并去重（以 doc_id 为准，我的文档优先保留完整信息）
   const docMap = new Map<string, DocInfo>()
   for (const doc of myDocs) docMap.set(doc.doc_id, doc)
   for (const doc of sharedDocs) {
+    if (!docMap.has(doc.doc_id)) docMap.set(doc.doc_id, doc)
+  }
+  for (const doc of wikiDocs) {
     if (!docMap.has(doc.doc_id)) docMap.set(doc.doc_id, doc)
   }
 
