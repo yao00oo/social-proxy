@@ -146,6 +146,53 @@ server.tool(
   }
 )
 
+// ── Tool: get_all_messages ────────────────────────────
+server.tool(
+  'get_all_messages',
+  '获取某联系人的全部聊天记录（不限条数），或获取最近N分钟所有聊天的完整消息。适合需要完整上下文的场景。',
+  {
+    contact_name: z.string().optional().describe('联系人姓名（不传则返回所有人的最近消息）'),
+    minutes: z.number().optional().describe('时间窗口（分钟），仅在不指定联系人时生效，默认30'),
+    offset: z.number().optional().describe('跳过前N条，用于分页'),
+    limit: z.number().optional().describe('返回条数，默认500，最大2000'),
+  },
+  async ({ contact_name, minutes, offset, limit }) => {
+    const db = getDb()
+    const lim = Math.min(limit ?? 500, 2000)
+    const off = offset ?? 0
+
+    let rows: any[]
+    let total: number
+
+    if (contact_name) {
+      total = (db.prepare(`SELECT COUNT(*) as n FROM messages WHERE contact_name = ?`).get(contact_name) as any).n
+      rows = db.prepare(`
+        SELECT contact_name, direction, content, timestamp FROM messages
+        WHERE contact_name = ? ORDER BY timestamp ASC LIMIT ? OFFSET ?
+      `).all(contact_name, lim, off)
+    } else {
+      const mins = minutes ?? 30
+      total = (db.prepare(`SELECT COUNT(*) as n FROM messages WHERE timestamp > datetime('now', '-' || ? || ' minutes')`).get(mins) as any).n
+      rows = db.prepare(`
+        SELECT contact_name, direction, content, timestamp FROM messages
+        WHERE timestamp > datetime('now', '-' || ? || ' minutes')
+        ORDER BY timestamp ASC LIMIT ? OFFSET ?
+      `).all(mins, lim, off)
+    }
+
+    if (rows.length === 0) {
+      return { content: [{ type: 'text', text: '没有消息' }] }
+    }
+
+    const text = rows.map(m =>
+      `[${m.timestamp.slice(0, 16)} ${m.contact_name} ${m.direction === 'sent' ? '←我' : '→'}] ${m.content}`
+    ).join('\n')
+
+    const header = `共 ${total} 条，返回 ${rows.length} 条（offset=${off}）${total > off + lim ? `\n还有 ${total - off - lim} 条未显示，传 offset=${off + lim} 获取下一页` : ''}\n\n`
+    return { content: [{ type: 'text', text: header + text }] }
+  }
+)
+
 // ── Tool: search_messages ─────────────────────────────
 server.tool(
   'search_messages',
