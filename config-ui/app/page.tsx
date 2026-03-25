@@ -56,7 +56,7 @@ function DocSyncSection() {
   }
 
   return (
-    <Section title="04 飞书文档同步">
+    <Section title="05 飞书文档同步">
       <p className="text-gray-500 text-sm mb-4">
         同步飞书云文档内容到本地，需开通 <code className="text-purple-400">drive:drive:readonly</code> 和 <code className="text-purple-400">docx:document:readonly</code> 用户身份权限。
       </p>
@@ -123,6 +123,11 @@ export default function ConfigPage() {
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // ── 实时消息 ──────────────────────────────────────
+  const [realtimeSuggestions, setRealtimeSuggestions] = useState<any[]>([])
+  const [realtimeUnread, setRealtimeUnread] = useState(0)
+  const [realtimePolling, setRealtimePolling] = useState(false)
+
   // ── 飞书状态 ──────────────────────────────────────
   const [feishuAuthed, setFeishuAuthed] = useState(false)
   const [feishuUserName, setFeishuUserName] = useState('')
@@ -152,11 +157,33 @@ export default function ConfigPage() {
     if (data.name) setFeishuUserName(data.name)
   }, [])
 
+  const fetchRealtimeSuggestions = useCallback(async () => {
+    const data = await fetch('/api/feishu-realtime').then(r => r.json())
+    setRealtimeSuggestions(data.suggestions || [])
+    setRealtimeUnread(data.unread || 0)
+  }, [])
+
+  const triggerRealtimePoll = async () => {
+    setRealtimePolling(true)
+    await fetch('/api/feishu-realtime', { method: 'POST' })
+    await fetchRealtimeSuggestions()
+    setRealtimePolling(false)
+  }
+
+  const markAllRead = async () => {
+    await fetch('/api/feishu-realtime', { method: 'PATCH' })
+    await fetchRealtimeSuggestions()
+  }
+
   useEffect(() => {
     fetchContacts()
     fetchSettings()
     checkFeishuAuth()
-  }, [fetchContacts, fetchSettings, checkFeishuAuth])
+    fetchRealtimeSuggestions()
+    // Auto-refresh realtime suggestions every 30s
+    const timer = setInterval(fetchRealtimeSuggestions, 30000)
+    return () => clearInterval(timer)
+  }, [fetchContacts, fetchSettings, checkFeishuAuth, fetchRealtimeSuggestions])
 
   // 自动滚动 log 到底部
   useEffect(() => {
@@ -443,8 +470,58 @@ export default function ConfigPage() {
           )}
         </Section>
 
-        {/* ── 03 联系人邮箱 ── */}
-        <Section title="03 联系人邮箱">
+        {/* ── 03 实时消息 ── */}
+        <Section title={`03 实时消息${realtimeUnread > 0 ? ` (${realtimeUnread} 条未读)` : ''}`}>
+          <p className="text-gray-500 text-sm mb-4">
+            通过飞书事件订阅接收实时消息，自动生成 AI 回复建议。
+            需在飞书开放平台配置事件订阅，回调 URL：<code className="text-purple-400">https://relay.botook.ai/feishu/event</code>，
+            订阅事件 <code className="text-purple-400">im.message.receive_v1</code>。
+          </p>
+          <div className="flex items-center gap-3 mb-4">
+            <button
+              onClick={triggerRealtimePoll}
+              disabled={realtimePolling}
+              className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors disabled:opacity-50"
+            >
+              {realtimePolling ? '同步中...' : '手动拉取'}
+            </button>
+            {realtimeUnread > 0 && (
+              <button
+                onClick={markAllRead}
+                className="px-4 py-2 rounded-lg bg-[#1f1f1f] hover:bg-[#2a2a2a] text-gray-400 hover:text-white text-sm border border-[#2a2a2a] transition-colors"
+              >
+                全部标记已读
+              </button>
+            )}
+            <span className="text-xs text-gray-600">每30秒自动刷新</span>
+          </div>
+          {realtimeSuggestions.length === 0 ? (
+            <p className="text-gray-600 text-sm">暂无实时消息。配置飞书事件订阅后，收到消息将在此显示。</p>
+          ) : (
+            <div className="space-y-3 max-h-[480px] overflow-y-auto">
+              {realtimeSuggestions.map((s) => (
+                <div key={s.id} className={`rounded-lg border p-3 ${s.is_read ? 'border-[#1f1f1f] bg-[#0a0a0a]' : 'border-blue-600/30 bg-[#0a0f1a]'}`}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-blue-400 font-medium text-sm">{s.contact_name}</span>
+                    <span className="text-gray-600 text-xs font-mono">{s.created_at?.slice(0, 16)}</span>
+                  </div>
+                  <p className="text-white text-sm mb-2">{s.incoming_content}</p>
+                  {s.suggestion && (
+                    <div className="bg-[#111111] rounded p-2 text-xs text-gray-400 whitespace-pre-wrap border-l-2 border-purple-600/50">
+                      {s.suggestion}
+                    </div>
+                  )}
+                  {!s.suggestion && (
+                    <p className="text-gray-600 text-xs">（设置 OPENROUTER_API_KEY 可自动生成回复建议）</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+
+        {/* ── 04 联系人邮箱 ── */}
+        <Section title="04 联系人">
           {contacts.length === 0 ? (
             <p className="text-gray-600 text-sm">暂无联系人，先导入微信记录或同步飞书</p>
           ) : (
@@ -493,7 +570,7 @@ export default function ConfigPage() {
         <DocSyncSection />
 
         {/* ── 05 聊天记录 ── */}
-        <Section title="05 聊天记录">
+        <Section title="06 聊天记录">
           <div className="flex gap-2 mb-4">
             <select
               value={msgContact}
@@ -534,7 +611,7 @@ export default function ConfigPage() {
         </Section>
 
         {/* ── 06 权限 + SMTP ── */}
-        <Section title="06 权限 + SMTP 配置">
+        <Section title="07 权限 + SMTP 配置">
           <div className="mb-5">
             <p className="text-gray-400 text-xs mb-2">发送权限</p>
             <div className="flex gap-3">
@@ -572,7 +649,7 @@ export default function ConfigPage() {
         </Section>
 
         {/* ── 07 安装命令 ── */}
-        <Section title="07 安装 MCP Server">
+        <Section title="08 安装 MCP Server">
           <p className="text-gray-400 text-sm mb-3">复制以下命令到终端，完成 agent 安装：</p>
           <div className="relative bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg px-4 py-3 font-mono text-sm text-green-400 overflow-x-auto">
             <pre className="whitespace-pre-wrap break-all">{installCmd}</pre>

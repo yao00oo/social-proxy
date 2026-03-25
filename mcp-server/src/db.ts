@@ -40,6 +40,7 @@ function initSchema(db: Database.Database) {
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       name            TEXT UNIQUE NOT NULL,
       email           TEXT,
+      feishu_open_id  TEXT,
       last_contact_at TEXT,
       message_count   INTEGER DEFAULT 0
     );
@@ -58,6 +59,18 @@ function initSchema(db: Database.Database) {
       ('smtp_pass',        ''),
       ('smtp_from_name',   ''),
       ('permission_mode',  'suggest');
+
+    -- 实时消息回复建议表
+    CREATE TABLE IF NOT EXISTS reply_suggestions (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id       TEXT UNIQUE,
+      contact_name     TEXT NOT NULL,
+      chat_id          TEXT,
+      incoming_content TEXT NOT NULL,
+      suggestion       TEXT,
+      created_at       TEXT NOT NULL,
+      is_read          INTEGER DEFAULT 0
+    );
   `)
 }
 

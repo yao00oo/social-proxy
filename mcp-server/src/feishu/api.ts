@@ -116,7 +116,7 @@ export async function listChats(userToken: string): Promise<Array<{ chat_id: str
   return chats.map(c => ({
     chat_id: c.chat_id,
     name: c.name || c.chat_id,
-    chat_type: c.chat_type, // 'p2p' | 'group'
+    chat_type: c.chat_type || '',
   }))
 }
 
@@ -175,6 +175,25 @@ export async function listMessages(
   }
 
   return messages
+}
+
+// ── 发送文本消息到指定会话 ────────────────────────────
+export async function sendMessage(
+  userToken: string,
+  chatId: string,
+  text: string,
+): Promise<{ message_id: string }> {
+  const res = await post(
+    '/im/v1/messages?receive_id_type=chat_id',
+    {
+      receive_id: chatId,
+      msg_type: 'text',
+      content: JSON.stringify({ text }),
+    },
+    { Authorization: `Bearer ${userToken}` },
+  )
+  if (res.code !== 0) throw new Error(`sendMessage failed: ${res.msg} (code=${res.code})`)
+  return { message_id: res.data.message_id }
 }
 
 // ── 解析消息内容为纯文本 ──────────────────────────────
