@@ -6,7 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { getContacts } from './tools/get_contacts'
 import { getStats } from './tools/get_stats'
-import { getSummaries } from './tools/get_summaries'
+import { getSummaries, formatSummaries } from './tools/get_summaries'
 import { getDocSummaries } from './tools/get_doc_summaries'
 import { getDb } from './db'
 import { getHistory } from './tools/get_history'
@@ -52,11 +52,8 @@ server.tool(
   },
   async ({ search }) => {
     const summaries = getSummaries(search)
-    const text = summaries.map(s =>
-      `【${s.chat_name}】${s.start_time?.slice(0,10)} ~ ${s.end_time?.slice(0,10)} (${s.message_count}条)\n${s.summary}`
-    ).join('\n\n---\n\n')
     return {
-      content: [{ type: 'text', text: `共 ${summaries.length} 个会话摘要：\n\n${text}` }],
+      content: [{ type: 'text', text: formatSummaries(summaries) }],
     }
   }
 )
@@ -222,10 +219,11 @@ server.tool(
   '以用户身份给联系人发邮件。suggest 模式下返回草稿需用户确认，auto 模式直接发送。',
   {
     contact_name: z.string().describe('联系人姓名'),
-    subject: z.string().describe('邮件主题'),
+    subject: z.string().optional().describe('邮件主题,不传则自动从正文生成'),
     body: z.string().describe('邮件正文'),
   },
   async ({ contact_name, subject, body }) => {
+    if (!subject) subject = body.slice(0, 30).replace(/\n/g, ' ') + (body.length > 30 ? '...' : '')
     const result = await sendEmail({ contact_name, subject, body })
     return {
       content: [
@@ -328,6 +326,36 @@ server.tool(
   }
 )
 
+// ── sync-daemon 守护 ─────────────────────────────────
+import { execSync, spawn } from 'child_process'
+import path from 'path'
+
+function ensureSyncDaemon() {
+  try {
+    const out = execSync('pgrep -f "sync-daemon"', { encoding: 'utf-8' }).trim()
+    if (out) {
+      console.error('[social-proxy] sync-daemon 已在运行 (pid: ' + out.split('\n')[0] + ')')
+      return
+    }
+  } catch {
+    // pgrep 没找到进程，返回非0
+  }
+
+  console.error('[social-proxy] sync-daemon 未运行，正在拉起...')
+  const projectRoot = path.resolve(__dirname, '..', '..')
+  const child = spawn('npx', ['ts-node', path.join(projectRoot, 'sync-daemon.ts')], {
+    cwd: projectRoot,
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      DB_PATH: process.env.DB_PATH || path.join(projectRoot, 'social-proxy.db'),
+    },
+  })
+  child.unref()
+  console.error(`[social-proxy] sync-daemon 已拉起 (pid: ${child.pid})`)
+}
+
 // ── 启动 ──────────────────────────────────────────────
 import { quickSync } from './feishu/sync'
 import { quickDocSync } from './feishu/docs'
@@ -354,6 +382,9 @@ async function runSync() {
 async function main() {
   const transport = new StdioServerTransport()
   await server.connect(transport)
+
+  // 确保 sync-daemon 在后台运行
+  ensureSyncDaemon()
 
   // 启动时立即同步一次
   runSync()

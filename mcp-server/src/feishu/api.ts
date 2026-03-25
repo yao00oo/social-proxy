@@ -216,7 +216,7 @@ export async function getUserInfo(
   const u = res.data?.user || {}
   return {
     name: u.name || '',
-    email: u.email || '',
+    email: u.enterprise_email || u.email || '',
     mobile: u.mobile || '',
   }
 }

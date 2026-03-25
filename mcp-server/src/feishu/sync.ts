@@ -2,7 +2,7 @@
 // 全量拉取 + 增量同步（基于每个会话的 last_sync_ts）
 
 import { getDb } from '../db'
-import { listChats, listMessages, downloadImage } from './api'
+import { listChats, listMessages, downloadImage, getUserInfo, getAppAccessToken } from './api'
 import { getSetting, saveSetting, ensureValidToken } from './auth'
 import { postSync, NewMessages } from '../sync/post-sync'
 import path from 'path'
@@ -156,6 +156,48 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
   }
 
   log(`\n✅ 同步完成: ${result.imported} 条消息，${result.errors.length} 个错误`)
+
+  // 4. 拉取缺少手机/邮箱的飞书用户信息
+  const usersWithoutInfo = db.prepare(
+    `SELECT open_id, name FROM feishu_users WHERE (email IS NULL OR email = '') AND open_id LIKE 'ou_%'`
+  ).all() as { open_id: string; name: string }[]
+
+  if (usersWithoutInfo.length > 0) {
+    log(`\n获取 ${usersWithoutInfo.length} 个用户的手机/邮箱...`)
+    const appId = getSetting('feishu_app_id')
+    const appSecret = getSetting('feishu_app_secret')
+    if (appId && appSecret) {
+      try {
+        const appToken = await getAppAccessToken(appId, appSecret)
+        const updateUser = db.prepare(
+          `UPDATE feishu_users SET email = ?, phone = ? WHERE open_id = ?`
+        )
+        const updateContact = db.prepare(
+          `UPDATE contacts SET email = ?, phone = ? WHERE feishu_open_id = ? OR name = ?`
+        )
+        let fetched = 0
+        for (const u of usersWithoutInfo) {
+          try {
+            const info = await getUserInfo(appToken, u.open_id)
+            if (info.email || info.mobile || info.name) {
+              const realName = info.name || u.name
+              updateUser.run(info.email || null, info.mobile || null, u.open_id)
+              if (info.name && info.name !== u.name) {
+                db.prepare(`UPDATE feishu_users SET name = ? WHERE open_id = ?`).run(realName, u.open_id)
+              }
+              updateContact.run(info.email || null, info.mobile || null, u.open_id, u.name)
+              fetched++
+            }
+          } catch (e: any) {
+            log(`  ⚠ 获取 ${u.name} 信息失败: ${e.message}`)
+          }
+        }
+        log(`  → 获取了 ${fetched} 个用户的联系方式`)
+      } catch (e: any) {
+        log(`  ⚠ 获取 app_access_token 失败: ${e.message}`)
+      }
+    }
+  }
 
   // 通用 post-sync：自动摘要
   const newMessages: NewMessages = {}
