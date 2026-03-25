@@ -89,7 +89,7 @@ export async function pollAndSync(): Promise<{ synced: number; suggestions: numb
   try {
     const res = await fetch(`${RELAY_URL}/feishu/events?consumer=${CONSUMER}`)
     if (!res.ok) return { synced: 0, suggestions: 0 }
-    events = await res.json()
+    events = await res.json() as any[]
   } catch {
     return { synced: 0, suggestions: 0 }
   }

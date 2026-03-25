@@ -136,6 +136,8 @@ export default function ConfigPage() {
   const [feishuSyncing, setFeishuSyncing] = useState(false)
   const [feishuLog, setFeishuLog] = useState<string[]>([])
   const [feishuResult, setFeishuResult] = useState<any>(null)
+  const [autoSync, setAutoSync] = useState(true)
+  const [autoSyncSeconds, setAutoSyncSeconds] = useState(15)
   const logRef = useRef<HTMLDivElement>(null)
 
   const fetchContacts = useCallback(async () => {
@@ -180,6 +182,12 @@ export default function ConfigPage() {
     fetchSettings()
     checkFeishuAuth()
     fetchRealtimeSuggestions()
+    // 页面加载时自动开启 15 秒同步
+    fetch('/api/feishu-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autoSyncSeconds: 15 }),
+    })
     // Auto-refresh realtime suggestions every 30s
     const timer = setInterval(fetchRealtimeSuggestions, 30000)
     return () => clearInterval(timer)
@@ -354,15 +362,79 @@ export default function ConfigPage() {
 
         {/* ── 01 微信导入 ── */}
         <Section title="01 导入微信记录">
-          <p className="text-gray-500 text-sm mb-4">
-            支持微信导出的 .txt 格式，每行：<code className="text-purple-400">2024-01-01 12:00 张三: 消息内容</code>
-          </p>
+          {/* 导出教程 */}
+          <div className="mb-5 space-y-3">
+            <p className="text-gray-400 text-sm font-medium">如何导出微信聊天记录？</p>
+
+            {/* 方法一：转发到文件传输助手 */}
+            <details className="group" open>
+              <summary className="cursor-pointer text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                方法一：多选转发（推荐，最简单）
+              </summary>
+              <ol className="mt-2 ml-4 text-xs text-gray-500 space-y-1.5 list-decimal list-outside">
+                <li>打开微信聊天窗口，<strong className="text-gray-400">长按</strong>一条消息 → 点击「多选」</li>
+                <li>勾选要导出的消息（可一次选多条）</li>
+                <li>点击左下角「转发」→ 选择「<strong className="text-gray-400">文件传输助手</strong>」→ 选择「<strong className="text-gray-400">逐条转发</strong>」</li>
+                <li>电脑端微信打开「文件传输助手」，全选消息 → <strong className="text-gray-400">复制</strong></li>
+                <li>粘贴到文本编辑器，保存为 <code className="text-purple-400">.txt</code> 文件</li>
+                <li>在下方上传该文件</li>
+              </ol>
+              <div className="mt-2 ml-4 p-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded text-xs text-gray-600">
+                格式为每行 <code className="text-purple-400 mx-1">2024-01-01 12:00 张三: 消息内容</code>，
+                「逐条转发」会保留每条消息的发送者和时间
+              </div>
+            </details>
+
+            {/* 方法二：邮件发送 */}
+            <details className="group">
+              <summary className="cursor-pointer text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                方法二：邮件发送聊天记录
+              </summary>
+              <ol className="mt-2 ml-4 text-xs text-gray-500 space-y-1.5 list-decimal list-outside">
+                <li>打开微信聊天窗口 → 点击右上角「...」→ 「查找聊天记录」</li>
+                <li>选择「日期」筛选需要的时间范围</li>
+                <li>长按消息 → 「多选」→ 全选该范围内的消息</li>
+                <li>点击左下角「转发」→ 选择发送到自己的<strong className="text-gray-400">邮箱</strong></li>
+                <li>在邮箱中收到聊天记录，复制正文保存为 <code className="text-purple-400">.txt</code> 文件</li>
+              </ol>
+            </details>
+
+            {/* 方法三：电脑端直接复制 */}
+            <details className="group">
+              <summary className="cursor-pointer text-sm text-blue-400 hover:text-blue-300 transition-colors">
+                方法三：电脑端直接复制（少量消息）
+              </summary>
+              <ol className="mt-2 ml-4 text-xs text-gray-500 space-y-1.5 list-decimal list-outside">
+                <li>在电脑端微信打开聊天窗口</li>
+                <li>向上滚动到需要的位置，按住 <kbd className="text-gray-400 bg-[#1f1f1f] px-1 rounded">Shift</kbd> 点击第一条和最后一条消息进行多选</li>
+                <li>右键 →「复制」，粘贴到文本编辑器保存为 <code className="text-purple-400">.txt</code></li>
+              </ol>
+              <div className="mt-2 ml-4 p-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded text-xs text-gray-600">
+                适合少量消息。电脑端复制的格式通常已经包含时间和发送者信息
+              </div>
+            </details>
+          </div>
+
+          {/* 支持的格式说明 */}
+          <div className="mb-4 p-3 bg-[#0a0a0a] border border-[#1f1f1f] rounded-lg">
+            <p className="text-xs text-gray-500 mb-1">支持的文件格式：</p>
+            <div className="flex gap-4 text-xs">
+              <span className="text-purple-400">.txt</span>
+              <span className="text-gray-600">每行 <code>时间 发送者: 消息内容</code></span>
+            </div>
+            <div className="flex gap-4 text-xs">
+              <span className="text-purple-400">.csv</span>
+              <span className="text-gray-600">包含时间、发送者、内容的 CSV</span>
+            </div>
+          </div>
+
+          {/* 上传按钮 */}
           <div className="flex items-center gap-4">
             <label className="cursor-pointer">
               <span className="inline-block px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm transition-colors">
-                {importing ? '导入中...' : '选择文件'}
+                {importing ? '导入中...' : '选择文件上传'}
               </span>
-              <input ref={fileRef} type="file" accept=".txt" className="hidden" onChange={handleImport} disabled={importing} />
+              <input ref={fileRef} type="file" accept=".txt,.csv" className="hidden" onChange={handleImport} disabled={importing} />
             </label>
             {importResult && (
               <span className="text-sm text-gray-400">
@@ -424,10 +496,56 @@ export default function ConfigPage() {
                 disabled={feishuSyncing}
                 className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors disabled:opacity-50"
               >
-                {feishuSyncing ? '同步中...' : '同步消息'}
+                {feishuSyncing ? '同步中...' : '立即同步'}
               </button>
             )}
           </div>
+
+          {/* 自动同步 */}
+          {feishuAuthed && (
+            <div className="flex items-center gap-3 mb-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoSync}
+                  onChange={async (e) => {
+                    const enabled = e.target.checked
+                    setAutoSync(enabled)
+                    await fetch('/api/feishu-sync', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ autoSyncSeconds: enabled ? autoSyncSeconds : 0 }),
+                    })
+                  }}
+                  className="accent-purple-600 w-4 h-4"
+                />
+                <span className="text-sm text-white">自动同步</span>
+              </label>
+              <select
+                value={autoSyncSeconds}
+                onChange={async (e) => {
+                  const secs = Number(e.target.value)
+                  setAutoSyncSeconds(secs)
+                  if (autoSync) {
+                    await fetch('/api/feishu-sync', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ autoSyncSeconds: secs }),
+                    })
+                  }
+                }}
+                disabled={!autoSync}
+                className="bg-[#0a0a0a] border border-[#2a2a2a] rounded px-2 py-1 text-white text-sm focus:outline-none disabled:opacity-40"
+              >
+                <option value={15}>每 15 秒（快速）</option>
+                <option value={30}>每 30 秒</option>
+                <option value={60}>每 1 分钟</option>
+                <option value={300}>每 5 分钟</option>
+                <option value={600}>每 10 分钟</option>
+              </select>
+              {autoSync && <span className="text-xs text-green-400">● 自动同步运行中</span>}
+            </div>
+          )}
 
           {/* 授权链接（弹窗被拦截时手动点击）*/}
           {feishuAuthUrl && !feishuAuthed && (

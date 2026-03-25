@@ -138,4 +138,7 @@ async function main() {
   console.log(`\n完成：成功 ${ok}，失败 ${fail}`)
 }
 
-main().catch(console.error)
+// 只在直接运行时执行，import 时不触发
+if (require.main === module) {
+  main().catch(console.error)
+}
