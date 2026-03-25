@@ -9,3 +9,30 @@ export function getDocSummaries(search?: string) {
     ORDER BY modified_time DESC
   `).all(...(search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [])) as any[]
 }
+
+// 获取单个文档的完整内容（从数据库读，如果没有则实时拉取）
+export async function getDocContent(docId: string): Promise<{ title: string; doc_type: string; url: string; content: string } | null> {
+  const db = getDb()
+  const row = db.prepare(`SELECT title, doc_type, url, content FROM feishu_docs WHERE doc_id = ?`).get(docId) as any
+  if (!row) return null
+
+  // 如果有内容直接返回
+  if (row.content) return row
+
+  // 没有内容，尝试实时拉取（仅 docx）
+  if (row.doc_type === 'docx') {
+    const token = (db.prepare(`SELECT value FROM settings WHERE key='feishu_user_access_token'`).get() as any)?.value
+    if (token) {
+      try {
+        const { getDocContent: fetchContent } = await import('../feishu/docs')
+        const content = await fetchContent(token, docId)
+        if (content) {
+          db.prepare(`UPDATE feishu_docs SET content = ?, synced_at = datetime('now') WHERE doc_id = ?`).run(content, docId)
+          return { ...row, content }
+        }
+      } catch {}
+    }
+  }
+
+  return row
+}

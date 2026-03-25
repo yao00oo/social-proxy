@@ -77,16 +77,35 @@ server.tool(
 // ── Tool: get_doc_summaries ───────────────────────────
 server.tool(
   'get_doc_summaries',
-  '获取飞书文档摘要列表，可按关键词搜索标题或内容，用于快速定位相关文档',
+  '获取飞书文档摘要列表，可按关键词搜索标题或内容，用于快速定位相关文档。找到目标后用 get_doc_content 读取完整内容。',
   { search: z.string().optional().describe('按标题或内容关键词搜索') },
   async ({ search }) => {
     const docs = getDocSummaries(search)
     const text = docs.map(d =>
-      `【${d.title}】(${d.doc_type}) ${d.modified_time?.slice(0, 10)}\n${d.summary || '暂无摘要'}\n${d.url}`
+      `【${d.title}】(${d.doc_type}) ${d.modified_time?.slice(0, 10)} doc_id:${d.doc_id}\n${d.summary || '暂无摘要'}\n${d.url}`
     ).join('\n\n---\n\n')
     return {
       content: [{ type: 'text', text: `共 ${docs.length} 个文档：\n\n${text}` }],
     }
+  }
+)
+
+// ── Tool: get_doc_content ───────────────────────────
+server.tool(
+  'get_doc_content',
+  '获取飞书文档的完整内容。传入 doc_id（从 get_doc_summaries 的结果中获取）。',
+  { doc_id: z.string().describe('文档ID，从 get_doc_summaries 结果的 doc_id 字段获取') },
+  async ({ doc_id }) => {
+    const { getDocContent } = await import('./tools/get_doc_summaries')
+    const doc = await getDocContent(doc_id)
+    if (!doc) {
+      return { content: [{ type: 'text', text: '文档不存在' }] }
+    }
+    const header = `【${doc.title}】(${doc.doc_type})\n${doc.url}\n\n`
+    if (!doc.content) {
+      return { content: [{ type: 'text', text: header + `该文档类型 (${doc.doc_type}) 暂不支持内容提取。可在浏览器打开查看：${doc.url}` }] }
+    }
+    return { content: [{ type: 'text', text: header + doc.content }] }
   }
 )
 
