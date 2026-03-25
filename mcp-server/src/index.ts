@@ -11,6 +11,8 @@ import { getDocSummaries } from './tools/get_doc_summaries'
 import { getDb } from './db'
 import { getHistory } from './tools/get_history'
 import { sendEmail } from './tools/send_email'
+import { sendFeishuMessage } from './tools/send_feishu_message'
+import { searchMessages } from './tools/search_messages'
 
 const server = new McpServer({
   name: 'social-proxy',
@@ -89,20 +91,46 @@ server.tool(
 // ── Tool: get_history ─────────────────────────────────
 server.tool(
   'get_history',
-  '获取某联系人的聊天记录，用于理解关系上下文和起草消息内容',
+  '获取某联系人的聊天记录。当消息总数超过 limit 时，自动附带历史摘要作为背景，再加上最近 limit 条原文，确保上下文完整。',
   {
     contact_name: z.string().describe('联系人姓名，需与导入时的名字一致'),
-    limit: z.number().optional().describe('返回条数，默认30条'),
+    limit: z.number().optional().describe('返回最近原文条数，默认50条'),
   },
   async ({ contact_name, limit }) => {
-    const messages = getHistory(contact_name, limit ?? 30)
+    const result = getHistory(contact_name, limit ?? 50)
+    let text = `消息总数：${result.total} 条\n`
+    if (result.summary) {
+      text += `\n【历史背景摘要（${result.summaryRange}）】\n${result.summary}\n`
+    }
+    text += `\n【最近 ${result.messages.length} 条原文】\n`
+    text += result.messages.map(m =>
+      `[${m.timestamp.slice(0, 16)} ${m.direction === 'sent' ? '我' : contact_name}] ${m.content}`
+    ).join('\n')
     return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(messages, null, 2),
-        },
-      ],
+      content: [{ type: 'text', text }],
+    }
+  }
+)
+
+// ── Tool: search_messages ─────────────────────────────
+server.tool(
+  'search_messages',
+  '在原始聊天记录中按关键词搜索，用于找到摘要中未体现的具体事件、日期、数字等细节',
+  {
+    keyword: z.string().describe('搜索关键词'),
+    contact_name: z.string().optional().describe('限定在某个联系人的聊天中搜索（可选）'),
+    limit: z.number().optional().describe('返回条数，默认30条'),
+  },
+  async ({ keyword, contact_name, limit }) => {
+    const results = searchMessages(keyword, contact_name, limit ?? 30)
+    if (results.length === 0) {
+      return { content: [{ type: 'text', text: `未找到包含"${keyword}"的消息` }] }
+    }
+    const text = results.map(r =>
+      `[${r.timestamp.slice(0, 16)} ${r.contact_name} ${r.direction === 'sent' ? '←我' : '→'}] ${r.content}`
+    ).join('\n')
+    return {
+      content: [{ type: 'text', text: `找到 ${results.length} 条：\n\n${text}` }],
     }
   }
 )
@@ -125,6 +153,22 @@ server.tool(
           text: JSON.stringify(result, null, 2),
         },
       ],
+    }
+  }
+)
+
+// ── Tool: send_feishu_message ─────────────────────────
+server.tool(
+  'send_feishu_message',
+  '以用户身份给飞书联系人发消息。suggest 模式下返回草稿需用户确认，auto 模式直接发送。适用于没有邮箱但有飞书记录的联系人。',
+  {
+    contact_name: z.string().describe('联系人姓名，需与飞书同步时的名字一致'),
+    content: z.string().describe('消息内容'),
+  },
+  async ({ contact_name, content }) => {
+    const result = await sendFeishuMessage({ contact_name, content })
+    return {
+      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
     }
   }
 )

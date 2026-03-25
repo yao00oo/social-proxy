@@ -4,13 +4,28 @@
 import OpenAI from 'openai'
 import { getDb } from './db'
 
-const client = new OpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
-  apiKey: process.env.OPENROUTER_API_KEY,
-})
-
-// 便宜且中文友好，国内可用
 const MODEL = 'deepseek/deepseek-chat'
+
+function getClient() {
+  return new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: process.env.OPENROUTER_API_KEY,
+  })
+}
+
+export function initSummaryTable() {
+  getDb().exec(`
+    CREATE TABLE IF NOT EXISTS chat_summaries (
+      chat_id       TEXT PRIMARY KEY,
+      chat_name     TEXT,
+      start_time    TEXT,
+      end_time      TEXT,
+      message_count INTEGER,
+      summary       TEXT,
+      updated_at    TEXT
+    )
+  `)
+}
 
 function getChats() {
   const db = getDb()
@@ -38,7 +53,7 @@ function getMessageStats(chatName: string) {
   `).get(chatName) as { total: number; start_time: string; end_time: string }
 }
 
-async function summarizeChat(chatName: string, chatType: string): Promise<string> {
+async function generateSummaryText(chatName: string, chatType: string): Promise<string> {
   const msgs = getChatMessages(chatName, 200)
   if (msgs.length === 0) return '无消息记录'
 
@@ -46,7 +61,7 @@ async function summarizeChat(chatName: string, chatType: string): Promise<string
     `[${m.timestamp.slice(0, 10)} ${m.direction === 'sent' ? '我' : chatName}]: ${m.content.slice(0, 150)}`
   ).join('\n')
 
-  const res = await client.chat.completions.create({
+  const res = await getClient().chat.completions.create({
     model: MODEL,
     max_tokens: 200,
     messages: [{
@@ -63,26 +78,15 @@ ${text}
   return res.choices[0].message.content?.trim() ?? '生成失败'
 }
 
-async function main() {
-  if (!process.env.OPENROUTER_API_KEY) {
-    console.error('请设置 OPENROUTER_API_KEY 环境变量')
-    process.exit(1)
-  }
-
+// 对单个聊天生成摘要并保存，供同步后增量触发调用
+export async function summarizeChatAndSave(chatId: string, chatName: string, chatType: string): Promise<void> {
+  initSummaryTable()
   const db = getDb()
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS chat_summaries (
-      chat_id       TEXT PRIMARY KEY,
-      chat_name     TEXT,
-      start_time    TEXT,
-      end_time      TEXT,
-      message_count INTEGER,
-      summary       TEXT,
-      updated_at    TEXT
-    )
-  `)
+  const stats = getMessageStats(chatName)
+  if (!stats || stats.total === 0) return
 
-  const upsert = db.prepare(`
+  const summary = await generateSummaryText(chatName, chatType)
+  db.prepare(`
     INSERT INTO chat_summaries(chat_id, chat_name, start_time, end_time, message_count, summary, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(chat_id) DO UPDATE SET
@@ -90,7 +94,17 @@ async function main() {
       message_count = excluded.message_count,
       end_time = excluded.end_time,
       updated_at = excluded.updated_at
-  `)
+  `).run(chatId, chatName, stats.start_time, stats.end_time, stats.total, summary)
+}
+
+async function main() {
+  if (!process.env.OPENROUTER_API_KEY) {
+    console.error('请设置 OPENROUTER_API_KEY 环境变量')
+    process.exit(1)
+  }
+
+  initSummaryTable()
+  const db = getDb()
 
   const chats = getChats()
   const done = new Set(
@@ -109,8 +123,7 @@ async function main() {
 
     process.stdout.write(`  [${i + 1}/${todo.length}] ${chat.chat_name.slice(0, 20)} (${stats.total}条)... `)
     try {
-      const summary = await summarizeChat(chat.chat_name, chat.chat_type)
-      upsert.run(chat.chat_id, chat.chat_name, stats.start_time, stats.end_time, stats.total, summary)
+      await summarizeChatAndSave(chat.chat_id, chat.chat_name, chat.chat_type)
       console.log('✓')
       ok++
     } catch (e: any) {

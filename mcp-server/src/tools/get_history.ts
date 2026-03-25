@@ -1,4 +1,4 @@
-// Tool: get_history — 获取某联系人的聊天记录
+// Tool: get_history — 获取某联系人的聊天记录（摘要 + 最近 N 条原文）
 import { getDb } from '../db'
 
 export interface MessageRow {
@@ -7,11 +7,23 @@ export interface MessageRow {
   timestamp: string
 }
 
-export function getHistory(contactName: string, limit = 30): MessageRow[] {
+export interface HistoryResult {
+  total: number          // 该联系人消息总数
+  summary?: string       // 历史摘要（当消息数超过 limit 时提供）
+  summaryRange?: string  // 摘要覆盖的时间范围
+  messages: MessageRow[] // 最近 limit 条原文
+}
+
+export function getHistory(contactName: string, limit = 50): HistoryResult {
   const db = getDb()
 
-  // 先取最近 limit 条，再按时间正序排（方便 agent 理解对话流）
-  const rows = db.prepare(`
+  const totalRow = db.prepare(
+    `SELECT COUNT(*) as n FROM messages WHERE contact_name = ?`
+  ).get(contactName) as { n: number }
+  const total = totalRow.n
+
+  // 最近 limit 条原文，正序排列
+  const messages = db.prepare(`
     SELECT direction, content, timestamp
     FROM (
       SELECT direction, content, timestamp
@@ -23,5 +35,22 @@ export function getHistory(contactName: string, limit = 30): MessageRow[] {
     ORDER BY timestamp ASC
   `).all(contactName, limit) as MessageRow[]
 
-  return rows
+  // 消息总数超过 limit 时，附带历史摘要作为背景
+  if (total > limit) {
+    const summaryRow = db.prepare(
+      `SELECT summary, start_time, end_time FROM chat_summaries
+       WHERE chat_name = ? AND summary IS NOT NULL`
+    ).get(contactName) as { summary: string; start_time: string; end_time: string } | undefined
+
+    return {
+      total,
+      summary: summaryRow?.summary,
+      summaryRange: summaryRow
+        ? `${summaryRow.start_time?.slice(0, 10)} ~ ${summaryRow.end_time?.slice(0, 10)}`
+        : undefined,
+      messages,
+    }
+  }
+
+  return { total, messages }
 }

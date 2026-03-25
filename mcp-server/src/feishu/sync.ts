@@ -2,51 +2,20 @@
 // 全量拉取 + 增量同步（基于每个会话的 last_sync_ts）
 
 import { getDb } from '../db'
-import { getAppAccessToken, refreshToken, listChats, listMessages } from './api'
+import { listChats, listMessages } from './api'
+import { getSetting, saveSetting, ensureValidToken } from './auth'
+import { summarizeChatAndSave } from '../summarize'
+
+const SUMMARIZE_THRESHOLD = 5 // 新增消息数达到此值才触发摘要更新
 
 export interface SyncResult {
   chats: number
   imported: number
   skipped: number
   errors: string[]
+  summarized: number
 }
 
-function getSetting(key: string): string {
-  const row = getDb().prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as any
-  return row?.value || ''
-}
-
-function saveSetting(key: string, value: string) {
-  getDb().prepare(`
-    INSERT INTO settings(key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(key, value)
-}
-
-// 确保 token 有效，过期则刷新
-async function ensureValidToken(): Promise<string> {
-  const token = getSetting('feishu_user_access_token')
-  const tokenTime = parseInt(getSetting('feishu_token_time') || '0', 10)
-  const refreshTk = getSetting('feishu_refresh_token')
-  const appId = getSetting('feishu_app_id')
-  const appSecret = getSetting('feishu_app_secret')
-
-  if (!token) throw new Error('未授权，请先在配置页面完成飞书 OAuth 授权')
-
-  // user_access_token 有效期 2 小时，提前 5 分钟刷新
-  const age = Date.now() - tokenTime
-  if (age > (2 * 60 - 5) * 60 * 1000 && refreshTk) {
-    console.log('[feishu] token 即将过期，刷新中...')
-    const appToken = await getAppAccessToken(appId, appSecret)
-    const newTokens = await refreshToken(refreshTk, appToken)
-    saveSetting('feishu_user_access_token', newTokens.access_token)
-    saveSetting('feishu_refresh_token', newTokens.refresh_token)
-    saveSetting('feishu_token_time', Date.now().toString())
-    return newTokens.access_token
-  }
-
-  return token
-}
 
 // 确保 feishu_sync_state 表存在（记录每个会话的同步进度）
 function initSyncState() {
@@ -73,7 +42,8 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
   const myName = getSetting('feishu_user_name')
   const myUserId = getSetting('feishu_user_id')
 
-  const result: SyncResult = { chats: 0, imported: 0, skipped: 0, errors: [] }
+  const result: SyncResult = { chats: 0, imported: 0, skipped: 0, errors: [], summarized: 0 }
+  const newMsgsPerChat = new Map<string, { chat_name: string; chat_type: string; count: number }>()
 
   // 1. 获取会话列表
   log('获取会话列表...')
@@ -85,7 +55,7 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
   const upsertState = db.prepare(`
     INSERT INTO feishu_sync_state(chat_id, chat_name, chat_type)
     VALUES (?, ?, ?)
-    ON CONFLICT(chat_id) DO UPDATE SET chat_name = excluded.chat_name
+    ON CONFLICT(chat_id) DO UPDATE SET chat_name = excluded.chat_name, chat_type = excluded.chat_type
   `)
   for (const chat of chats) {
     upsertState.run(chat.chat_id, chat.name, chat.chat_type)
@@ -98,9 +68,10 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
   `)
 
   const upsertContact = db.prepare(`
-    INSERT INTO contacts(name, email, last_contact_at, message_count)
-    VALUES (?, NULL, ?, 1)
+    INSERT INTO contacts(name, email, feishu_open_id, last_contact_at, message_count)
+    VALUES (?, NULL, ?, ?, 1)
     ON CONFLICT(name) DO UPDATE SET
+      feishu_open_id  = COALESCE(excluded.feishu_open_id, feishu_open_id),
       message_count   = message_count + 1,
       last_contact_at = CASE
         WHEN excluded.last_contact_at > last_contact_at THEN excluded.last_contact_at
@@ -155,18 +126,13 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
 
-          // p2p 会话：对方名字就是联系人名；群聊：用群名
-          const contactName = chat.chat_type === 'p2p'
-            ? (isSelf ? msg.sender_name : msg.sender_name)
-            : chat.name
-
           // p2p 里自己发的消息不作为联系人
           if (chat.chat_type === 'p2p' && isSelf) {
-            const otherName = chat.name
-            insertMessage.run(otherName, direction, msg.content, ts, msg.message_id)
+            insertMessage.run(chat.name, direction, msg.content, ts, msg.message_id)
           } else {
+            const contactName = chat.chat_type === 'p2p' ? msg.sender_name : chat.name
             insertMessage.run(contactName, direction, msg.content, ts, msg.message_id)
-            if (!isSelf) upsertContact.run(contactName, ts)
+            if (!isSelf) upsertContact.run(contactName, msg.sender_id || null, ts)
           }
 
           chatImported++
@@ -178,6 +144,9 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
       updateState.run(newTs, chat.chat_id)
       result.imported += chatImported
       log(`    → 导入 ${chatImported} 条`)
+      if (chatImported > 0) {
+        newMsgsPerChat.set(chat.chat_id, { chat_name: chat.name, chat_type: chat.chat_type, count: chatImported })
+      }
     } catch (err: any) {
       const errMsg = `${chat.name}: ${err.message}`
       result.errors.push(errMsg)
@@ -186,5 +155,30 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
   }
 
   log(`\n✅ 同步完成: ${result.imported} 条消息，${result.errors.length} 个错误`)
+
+  // 增量摘要：只对新增 >= SUMMARIZE_THRESHOLD 条消息的聊天重新生成摘要
+  if (process.env.OPENROUTER_API_KEY) {
+    const toSummarize = [...newMsgsPerChat.entries()].filter(([, v]) => v.count >= SUMMARIZE_THRESHOLD)
+    if (toSummarize.length > 0) {
+      log(`\n📝 自动更新摘要（新增 ≥${SUMMARIZE_THRESHOLD} 条）：共 ${toSummarize.length} 个会话`)
+      for (const [chatId, { chat_name, chat_type }] of toSummarize) {
+        log(`  摘要: ${chat_name}...`)
+        try {
+          await summarizeChatAndSave(chatId, chat_name, chat_type)
+          result.summarized++
+          log(`    ✓`)
+        } catch (e: any) {
+          log(`    ✗ ${e.message?.slice(0, 60)}`)
+        }
+      }
+      log(`摘要更新完成：${result.summarized} 个`)
+    }
+  } else {
+    const needSummarize = [...newMsgsPerChat.values()].filter(v => v.count >= SUMMARIZE_THRESHOLD).length
+    if (needSummarize > 0) {
+      log(`\n💡 ${needSummarize} 个会话有 ≥${SUMMARIZE_THRESHOLD} 条新消息，设置 OPENROUTER_API_KEY 可自动更新摘要`)
+    }
+  }
+
   return result
 }
