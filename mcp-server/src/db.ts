@@ -16,6 +16,7 @@ export function getDb(): Database.Database {
   _db.pragma('foreign_keys = ON')
 
   initSchema(_db)
+  migrate(_db)
   return _db
 }
 
@@ -40,6 +41,7 @@ function initSchema(db: Database.Database) {
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       name            TEXT UNIQUE NOT NULL,
       email           TEXT,
+      phone           TEXT,
       feishu_open_id  TEXT,
       last_contact_at TEXT,
       message_count   INTEGER DEFAULT 0
@@ -67,7 +69,9 @@ function initSchema(db: Database.Database) {
     -- 飞书用户名 → open_id 映射表（独立于会话，按发消息人建立）
     CREATE TABLE IF NOT EXISTS feishu_users (
       open_id  TEXT PRIMARY KEY,
-      name     TEXT NOT NULL
+      name     TEXT NOT NULL,
+      email    TEXT,
+      phone    TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_feishu_users_name ON feishu_users(name);
 
@@ -99,6 +103,20 @@ function initSchema(db: Database.Database) {
       is_at_me         INTEGER DEFAULT 0
     );
   `)
+}
+
+function migrate(db: Database.Database) {
+  // 给已有的 feishu_users 表加 email/phone 列
+  const cols = db.prepare(`PRAGMA table_info(feishu_users)`).all() as { name: string }[]
+  const colNames = cols.map(c => c.name)
+  if (!colNames.includes('email')) db.exec(`ALTER TABLE feishu_users ADD COLUMN email TEXT`)
+  if (!colNames.includes('phone')) db.exec(`ALTER TABLE feishu_users ADD COLUMN phone TEXT`)
+
+  // 给已有的 contacts 表加 phone 列
+  const contactCols = db.prepare(`PRAGMA table_info(contacts)`).all() as { name: string }[]
+  if (!contactCols.map(c => c.name).includes('phone')) {
+    db.exec(`ALTER TABLE contacts ADD COLUMN phone TEXT`)
+  }
 }
 
 export function getDbPath(): string {

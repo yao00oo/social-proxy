@@ -4,14 +4,12 @@
 import { getDb } from '../db'
 import { listChats, listMessages, downloadImage } from './api'
 import { getSetting, saveSetting, ensureValidToken } from './auth'
-import { summarizeChatAndSave } from '../summarize'
+import { postSync, NewMessages } from '../sync/post-sync'
 import path from 'path'
 import fs from 'fs'
 
 const IMAGES_DIR = path.join(__dirname, '../../../images')
 function ensureImagesDir() { if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true }) }
-
-const SUMMARIZE_THRESHOLD = 5 // 新增消息数达到此值才触发摘要更新
 
 export interface SyncResult {
   chats: number
@@ -159,29 +157,12 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
 
   log(`\n✅ 同步完成: ${result.imported} 条消息，${result.errors.length} 个错误`)
 
-  // 增量摘要：只对新增 >= SUMMARIZE_THRESHOLD 条消息的聊天重新生成摘要
-  if (process.env.OPENROUTER_API_KEY) {
-    const toSummarize = Array.from(newMsgsPerChat.entries()).filter(([, v]) => v.count >= SUMMARIZE_THRESHOLD)
-    if (toSummarize.length > 0) {
-      log(`\n📝 自动更新摘要（新增 ≥${SUMMARIZE_THRESHOLD} 条）：共 ${toSummarize.length} 个会话`)
-      for (const [chatId, { chat_name, chat_type }] of toSummarize) {
-        log(`  摘要: ${chat_name}...`)
-        try {
-          await summarizeChatAndSave(chatId, chat_name, chat_type)
-          result.summarized++
-          log(`    ✓`)
-        } catch (e: any) {
-          log(`    ✗ ${e.message?.slice(0, 60)}`)
-        }
-      }
-      log(`摘要更新完成：${result.summarized} 个`)
-    }
-  } else {
-    const needSummarize = Array.from(newMsgsPerChat.values()).filter(v => v.count >= SUMMARIZE_THRESHOLD).length
-    if (needSummarize > 0) {
-      log(`\n💡 ${needSummarize} 个会话有 ≥${SUMMARIZE_THRESHOLD} 条新消息，设置 OPENROUTER_API_KEY 可自动更新摘要`)
-    }
+  // 通用 post-sync：自动摘要
+  const newMessages: NewMessages = {}
+  for (const [, { chat_name, count }] of Array.from(newMsgsPerChat.entries())) {
+    newMessages[chat_name] = (newMessages[chat_name] || 0) + count
   }
+  result.summarized = await postSync(newMessages, onProgress)
 
   return result
 }

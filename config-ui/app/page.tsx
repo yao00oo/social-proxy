@@ -26,6 +26,8 @@ interface Settings {
   imap_port: string
   imap_user: string
   imap_pass: string
+  gmail_client_id: string
+  gmail_client_secret: string
 }
 
 const defaultSettings: Settings = {
@@ -41,6 +43,8 @@ const defaultSettings: Settings = {
   imap_port: '993',
   imap_user: '',
   imap_pass: '',
+  gmail_client_id: '',
+  gmail_client_secret: '',
 }
 
 function DocSyncSection() {
@@ -131,7 +135,14 @@ export default function ConfigPage() {
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // ── 邮件同步 ──────────────────────────────────────
+  // ── Gmail OAuth + 同步 ──────────────────────────────
+  const [gmailAuthed, setGmailAuthed] = useState(false)
+  const [gmailEmail, setGmailEmail] = useState('')
+  const [gmailSyncing, setGmailSyncing] = useState(false)
+  const [gmailSyncLog, setGmailSyncLog] = useState<string[]>([])
+  const [gmailSyncResult, setGmailSyncResult] = useState<any>(null)
+
+  // ── IMAP 邮件同步（备用）────────────────────────────
   const [emailSyncing, setEmailSyncing] = useState(false)
   const [emailSyncLog, setEmailSyncLog] = useState<string[]>([])
   const [emailSyncResult, setEmailSyncResult] = useState<any>(null)
@@ -172,6 +183,58 @@ export default function ConfigPage() {
     if (data.name) setFeishuUserName(data.name)
   }, [])
 
+  const checkGmailAuth = useCallback(async () => {
+    const data = await fetch('/api/gmail-auth').then(r => r.json())
+    setGmailAuthed(data.authed)
+    if (data.email) setGmailEmail(data.email)
+  }, [])
+
+  const handleGmailAuth = async () => {
+    // 先保存设置确保 client_id/secret 已存
+    await saveSettings()
+    const res = await fetch('/api/gmail-auth', { method: 'POST' })
+    const data = await res.json()
+    if (data.error) { alert(data.error); return }
+    if (data.authUrl) {
+      window.open(data.authUrl, '_blank', 'width=600,height=700')
+      const state = data.state
+      // 轮询 relay 拿 code，跟飞书一样
+      let tries = 0
+      const poll = setInterval(async () => {
+        tries++
+        try {
+          const codeRes = await fetch(`https://relay.botook.ai/gmail/code?state=${state}`).then(r => r.json())
+          if (codeRes.code) {
+            clearInterval(poll)
+            // 拿 code 换 token
+            const completeRes = await fetch('/api/gmail-complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ code: codeRes.code }),
+            }).then(r => r.json())
+            if (completeRes.error) {
+              alert(`Gmail 授权失败: ${completeRes.error}`)
+            } else {
+              setGmailAuthed(true)
+              setGmailEmail(completeRes.email || '')
+            }
+          }
+        } catch {}
+        if (tries > 60) clearInterval(poll)
+      }, 2000)
+    }
+  }
+
+  const handleGmailSync = async () => {
+    setGmailSyncing(true); setGmailSyncLog([]); setGmailSyncResult(null)
+    await fetch('/api/gmail-sync', { method: 'POST' })
+    const poll = setInterval(async () => {
+      const s = await fetch('/api/gmail-sync').then(r => r.json())
+      setGmailSyncLog(s.log || [])
+      if (!s.running) { clearInterval(poll); setGmailSyncing(false); setGmailSyncResult(s.lastResult); fetchContacts() }
+    }, 1500)
+  }
+
   const fetchRealtimeSuggestions = useCallback(async () => {
     const data = await fetch('/api/feishu-realtime').then(r => r.json())
     setRealtimeSuggestions(data.suggestions || [])
@@ -194,6 +257,7 @@ export default function ConfigPage() {
     fetchContacts()
     fetchSettings()
     checkFeishuAuth()
+    checkGmailAuth()
     fetchRealtimeSuggestions()
     // 页面加载时自动开启 15 秒同步
     fetch('/api/feishu-sync', {
@@ -728,6 +792,54 @@ export default function ConfigPage() {
 
         {/* ── 06 邮件配置 ── */}
         <Section title="07 邮件配置">
+          {/* Gmail OAuth */}
+          <p className="text-gray-400 text-xs mb-2 font-medium">Gmail（推荐，OAuth 授权）</p>
+          <p className="text-gray-600 text-xs mb-3">
+            一键授权后自动同步收件箱和已发送邮件。需先在{' '}
+            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" className="text-blue-400 underline">Google Cloud Console</a>
+            {' '}创建 OAuth Client ID（类型选 Web application，回调地址填{' '}
+            <code className="text-purple-400">http://localhost:3000/api/gmail-callback</code>），并启用 Gmail API。
+          </p>
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <Input label="Gmail Client ID" value={settings.gmail_client_id} onChange={(v) => setSettings({ ...settings, gmail_client_id: v })} placeholder="xxx.apps.googleusercontent.com" />
+            <Input label="Client Secret" type="password" value={settings.gmail_client_secret} onChange={(v) => setSettings({ ...settings, gmail_client_secret: v })} placeholder="GOCSPX-xxx" />
+          </div>
+          <div className="flex items-center gap-3 mb-4">
+            <button onClick={saveSettings} disabled={settingsSaving}
+              className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm transition-colors disabled:opacity-50">
+              {settingsSaved ? '已保存' : '保存'}
+            </button>
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full inline-block ${gmailAuthed ? 'bg-green-500' : 'bg-gray-600'}`}></span>
+              <span className="text-sm text-gray-500">{gmailAuthed ? gmailEmail : '未授权'}</span>
+            </div>
+            {!gmailAuthed ? (
+              <button onClick={handleGmailAuth} disabled={!settings.gmail_client_id}
+                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors disabled:opacity-50">
+                授权 Gmail
+              </button>
+            ) : (
+              <>
+                <button onClick={handleGmailSync} disabled={gmailSyncing}
+                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors disabled:opacity-50">
+                  {gmailSyncing ? '同步中...' : '同步邮件'}
+                </button>
+                {gmailSyncResult && !gmailSyncResult.error && (
+                  <span className="text-sm text-gray-400">导入 <span className="text-green-400 font-mono">{gmailSyncResult.imported}</span> 封</span>
+                )}
+              </>
+            )}
+          </div>
+          {gmailSyncLog.length > 0 && (
+            <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-3 mb-5 h-36 overflow-y-auto font-mono text-xs text-gray-400 space-y-0.5">
+              {gmailSyncLog.map((l, i) => <div key={i}>{l}</div>)}
+              {gmailSyncing && <div className="text-blue-400 animate-pulse">同步中...</div>}
+            </div>
+          )}
+
+          <hr className="border-[#1f1f1f] my-5" />
+
+          {/* 发送权限 */}
           <div className="mb-5">
             <p className="text-gray-400 text-xs mb-2">发送权限</p>
             <div className="flex gap-3">

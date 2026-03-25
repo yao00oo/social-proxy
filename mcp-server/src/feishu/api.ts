@@ -202,6 +202,25 @@ export async function sendMessage(
   return { message_id: res.data.message_id }
 }
 
+// ── 获取用户详细信息（手机、邮箱等） ─────────────────
+export async function getUserInfo(
+  appAccessToken: string,
+  openId: string,
+): Promise<{ name: string; email: string; mobile: string }> {
+  const res = await get(
+    `/contact/v3/users/${openId}`,
+    appAccessToken,
+    { user_id_type: 'open_id' },
+  )
+  if (res.code !== 0) throw new Error(`getUserInfo failed: ${res.msg} (code=${res.code})`)
+  const u = res.data?.user || {}
+  return {
+    name: u.name || '',
+    email: u.email || '',
+    mobile: u.mobile || '',
+  }
+}
+
 // ── 下载消息中的图片/表情资源 ────────────────────────
 export function downloadImage(
   userToken: string,
