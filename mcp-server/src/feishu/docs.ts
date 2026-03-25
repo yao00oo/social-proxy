@@ -143,6 +143,24 @@ export async function syncDocs(onProgress?: (msg: string) => void): Promise<{ to
   for (const doc of sharedDocs) {
     if (!docMap.has(doc.doc_id)) docMap.set(doc.doc_id, doc)
   }
+
+  // 3) 从全部历史消息中提取 wiki 链接
+  log('🔗 扫描消息中的文档链接...')
+  const msgTokens = extractDocTokensFromMessages(db, 0)
+  let wikiAdded = 0
+  for (const t of msgTokens) {
+    if (docMap.has(t)) continue
+    try {
+      const info = await getWikiNode(token, t)
+      if (info) {
+        docMap.set(info.doc_id, info)
+        if (info.doc_id !== t) docMap.set(t, { ...info, doc_id: t })
+        wikiAdded++
+      }
+    } catch {}
+  }
+  log(`  消息中发现 ${msgTokens.length} 个链接，新增 ${wikiAdded} 个 wiki 文档`)
+
   const allDocs = [...docMap.values()]
   log(`📄 合并去重后: ${allDocs.length} 个文档`)
 
@@ -184,22 +202,75 @@ export async function syncDocs(onProgress?: (msg: string) => void): Promise<{ to
   return { total: allDocs.length, synced, errors }
 }
 
-// 增量文档同步：只拉列表，对比 modified_time，有变更才拉内容
+// 获取 wiki 节点信息（node_token → obj_token + 元信息）
+async function getWikiNode(userToken: string, nodeToken: string): Promise<DocInfo | null> {
+  const res = await get('/wiki/v2/spaces/get_node', userToken, { token: nodeToken })
+  if (res.code !== 0) return null
+  const n = res.data?.node
+  if (!n) return null
+  return {
+    doc_id: n.obj_token || nodeToken,
+    title: n.title || '无标题',
+    doc_type: n.obj_type || 'wiki',
+    url: `https://wh9a7emh1y.feishu.cn/wiki/${nodeToken}`,
+    modified_time: n.obj_edit_time ? new Date(parseInt(n.obj_edit_time) * 1000).toISOString().slice(0, 19).replace('T', ' ') : '',
+    created_time: n.obj_create_time ? new Date(parseInt(n.obj_create_time) * 1000).toISOString().slice(0, 19).replace('T', ' ') : '',
+  }
+}
+
+// 从消息中提取 wiki/docx 链接的 token
+// minutes=0 表示扫描全部历史消息（用于 syncDocs 全量）
+function extractDocTokensFromMessages(db: ReturnType<typeof getDb>, minutes = 0): string[] {
+  const where = minutes > 0
+    ? `AND timestamp > datetime('now', '-${minutes} minutes')`
+    : ''
+  const rows = db.prepare(`
+    SELECT DISTINCT content FROM messages
+    WHERE (content LIKE '%feishu.cn/wiki/%' OR content LIKE '%feishu.cn/docx/%') ${where}
+  `).all() as any[]
+
+  const tokens = new Set<string>()
+  const re = /feishu\.cn\/(?:wiki|docx)\/([A-Za-z0-9]{20,})/g
+  for (const row of rows) {
+    let m
+    while ((m = re.exec(row.content)) !== null) {
+      tokens.add(m[1])
+    }
+  }
+  return [...tokens]
+}
+
+// 增量文档同步：云文档 + 消息中的 wiki 链接
 export async function quickDocSync(): Promise<{ updated: number; added: number }> {
   const db = getDb()
 
   const token = (db.prepare(`SELECT value FROM settings WHERE key='feishu_user_access_token'`).get() as any)?.value
   if (!token) return { updated: 0, added: 0 }
 
-  // 只拉我的文档列表（快速，不拉内容）
+  // 1) 云文档列表
   const docs = await listMyDocs(token)
-  // 也拉协作文档
   const shared = await listSharedDocs(token)
   const docMap = new Map<string, DocInfo>()
   for (const d of docs) docMap.set(d.doc_id, d)
   for (const d of shared) { if (!docMap.has(d.doc_id)) docMap.set(d.doc_id, d) }
 
-  const getExisting = db.prepare(`SELECT modified_time FROM feishu_docs WHERE doc_id = ?`)
+  // 2) 只扫最近5分钟消息中的新 wiki 链接
+  const getExisting = db.prepare(`SELECT doc_id, modified_time FROM feishu_docs WHERE doc_id = ?`)
+  const msgTokens = extractDocTokensFromMessages(db, 5)
+  for (const t of msgTokens) {
+    if (docMap.has(t)) continue
+    // 检查是否已入库（可能之前同步过）
+    if (getExisting.get(t)) continue
+    try {
+      const info = await getWikiNode(token, t)
+      if (info) {
+        docMap.set(info.doc_id, info)
+        // node_token 和 obj_token 可能不同，也加上
+        if (info.doc_id !== t) docMap.set(t, { ...info, doc_id: t })
+      }
+    } catch {}
+  }
+
   const upsert = db.prepare(`
     INSERT INTO feishu_docs(doc_id, title, doc_type, url, created_time, modified_time, content, synced_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
@@ -215,7 +286,6 @@ export async function quickDocSync(): Promise<{ updated: number; added: number }
   for (const doc of docMap.values()) {
     const existing = getExisting.get(doc.doc_id) as any
     if (!existing) {
-      // 新文档
       let content = ''
       if (doc.doc_type === 'docx') {
         try { content = await getDocContent(token, doc.doc_id) } catch {}
@@ -223,7 +293,6 @@ export async function quickDocSync(): Promise<{ updated: number; added: number }
       upsert.run(doc.doc_id, doc.title, doc.doc_type, doc.url, doc.created_time, doc.modified_time, content)
       added++
     } else if (doc.modified_time && doc.modified_time > (existing.modified_time || '')) {
-      // 已有但有更新
       let content = ''
       if (doc.doc_type === 'docx') {
         try { content = await getDocContent(token, doc.doc_id) } catch {}
@@ -231,7 +300,6 @@ export async function quickDocSync(): Promise<{ updated: number; added: number }
       upsert.run(doc.doc_id, doc.title, doc.doc_type, doc.url, doc.created_time, doc.modified_time, content)
       updated++
     }
-    // 没变化的跳过
   }
 
   return { updated, added }

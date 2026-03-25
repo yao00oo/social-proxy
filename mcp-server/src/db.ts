@@ -58,7 +58,11 @@ function initSchema(db: Database.Database) {
       ('smtp_user',        ''),
       ('smtp_pass',        ''),
       ('smtp_from_name',   ''),
-      ('permission_mode',  'suggest');
+      ('permission_mode',  'suggest'),
+      ('imap_host',        ''),
+      ('imap_port',        '993'),
+      ('imap_user',        ''),
+      ('imap_pass',        '');
 
     -- 飞书用户名 → open_id 映射表（独立于会话，按发消息人建立）
     CREATE TABLE IF NOT EXISTS feishu_users (
