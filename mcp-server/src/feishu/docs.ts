@@ -182,7 +182,7 @@ export async function syncDocByUrl(url: string): Promise<{ ok: boolean; title?: 
   if (!token) return { ok: false, error: '未授权' }
 
   // 从 URL 提取 token
-  const m = url.match(/feishu\.cn\/(?:wiki|docx|doc|sheet|bitable|mindnote)\/([A-Za-z0-9]+)/)
+  const m = url.match(/feishu\.cn\/(?:wiki|docx|doc|sheets?|bitable|base|mindnote|slides|drive\/folder)\/([A-Za-z0-9]+)/)
   if (!m) return { ok: false, error: '无法识别飞书文档URL' }
   const docToken = m[1]
   const isWiki = url.includes('/wiki/')
@@ -336,11 +336,11 @@ function extractDocTokensFromMessages(db: ReturnType<typeof getDb>, minutes = 0)
     : ''
   const rows = db.prepare(`
     SELECT DISTINCT content FROM messages
-    WHERE (content LIKE '%feishu.cn/wiki/%' OR content LIKE '%feishu.cn/docx/%') ${where}
+    WHERE content LIKE '%feishu.cn/%' ${where}
   `).all() as any[]
 
   const tokens = new Set<string>()
-  const re = /feishu\.cn\/(?:wiki|docx)\/([A-Za-z0-9]{20,})/g
+  const re = /feishu\.cn\/(?:wiki|docx|doc|sheet|sheets|bitable|base|mindnote|slides|drive\/folder)\/([A-Za-z0-9]{15,})/g
   for (const row of rows) {
     let m
     while ((m = re.exec(row.content)) !== null) {
