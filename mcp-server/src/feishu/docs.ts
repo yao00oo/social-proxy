@@ -168,11 +168,48 @@ export async function listWikiDocs(userToken: string, onProgress?: (msg: string)
   return docs
 }
 
-// 获取文档纯文本内容（仅支持 docx 类型）
-export async function getDocContent(userToken: string, docId: string): Promise<string> {
+// 获取文档纯文本内容（支持 docx 和 sheet）
+export async function getDocContent(userToken: string, docId: string, docType?: string): Promise<string> {
+  if (docType === 'sheet') return getSheetContent(userToken, docId)
+  // 默认尝试 docx
   const res = await get(`/docx/v1/documents/${docId}/raw_content`, userToken)
   if (res.code !== 0) return ''
   return res.data?.content || ''
+}
+
+// 读取 sheet 所有工作表的内容，转为文本
+async function getSheetContent(userToken: string, sheetToken: string): Promise<string> {
+  // 获取 sheet 列表
+  const metaRes = await get(`/sheets/v3/spreadsheets/${sheetToken}/sheets/query`, userToken)
+  if (metaRes.code !== 0) return ''
+  const sheets = metaRes.data?.sheets || []
+  if (sheets.length === 0) return ''
+
+  const parts: string[] = []
+  for (const s of sheets.slice(0, 5)) { // 最多读 5 个工作表
+    const rows = s.grid_properties?.row_count || 100
+    const cols = s.grid_properties?.column_count || 26
+    const maxRows = Math.min(rows, 200) // 最多 200 行
+    const maxCol = String.fromCharCode(64 + Math.min(cols, 26)) // 最多 Z 列
+    const range = `${s.sheet_id}!A1:${maxCol}${maxRows}`
+
+    const dataRes = await get(
+      `/sheets/v2/spreadsheets/${sheetToken}/values/${range}`,
+      userToken,
+      { valueRenderOption: 'FormattedValue' }
+    )
+    if (dataRes.code !== 0) continue
+    const values = dataRes.data?.valueRange?.values || []
+    if (values.length === 0) continue
+
+    const text = values
+      .filter((row: any[]) => row && row.some((c: any) => c != null && c !== ''))
+      .map((row: any[]) => row.map((c: any) => String(c ?? '')).join('\t'))
+      .join('\n')
+    if (text) parts.push(`【${s.title}】\n${text}`)
+  }
+
+  return parts.join('\n\n')
 }
 
 // 根据飞书 URL 手动同步单个文档
