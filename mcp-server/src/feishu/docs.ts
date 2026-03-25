@@ -183,3 +183,56 @@ export async function syncDocs(onProgress?: (msg: string) => void): Promise<{ to
   log(`\n✅ 文档同步完成: ${synced} 个，${errors.length} 个错误`)
   return { total: allDocs.length, synced, errors }
 }
+
+// 增量文档同步：只拉列表，对比 modified_time，有变更才拉内容
+export async function quickDocSync(): Promise<{ updated: number; added: number }> {
+  const db = getDb()
+
+  const token = (db.prepare(`SELECT value FROM settings WHERE key='feishu_user_access_token'`).get() as any)?.value
+  if (!token) return { updated: 0, added: 0 }
+
+  // 只拉我的文档列表（快速，不拉内容）
+  const docs = await listMyDocs(token)
+  // 也拉协作文档
+  const shared = await listSharedDocs(token)
+  const docMap = new Map<string, DocInfo>()
+  for (const d of docs) docMap.set(d.doc_id, d)
+  for (const d of shared) { if (!docMap.has(d.doc_id)) docMap.set(d.doc_id, d) }
+
+  const getExisting = db.prepare(`SELECT modified_time FROM feishu_docs WHERE doc_id = ?`)
+  const upsert = db.prepare(`
+    INSERT INTO feishu_docs(doc_id, title, doc_type, url, created_time, modified_time, content, synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(doc_id) DO UPDATE SET
+      title = excluded.title,
+      modified_time = CASE WHEN excluded.modified_time != '' THEN excluded.modified_time ELSE feishu_docs.modified_time END,
+      content = CASE WHEN excluded.content != '' THEN excluded.content ELSE feishu_docs.content END,
+      synced_at = excluded.synced_at
+  `)
+
+  let updated = 0, added = 0
+
+  for (const doc of docMap.values()) {
+    const existing = getExisting.get(doc.doc_id) as any
+    if (!existing) {
+      // 新文档
+      let content = ''
+      if (doc.doc_type === 'docx') {
+        try { content = await getDocContent(token, doc.doc_id) } catch {}
+      }
+      upsert.run(doc.doc_id, doc.title, doc.doc_type, doc.url, doc.created_time, doc.modified_time, content)
+      added++
+    } else if (doc.modified_time && doc.modified_time > (existing.modified_time || '')) {
+      // 已有但有更新
+      let content = ''
+      if (doc.doc_type === 'docx') {
+        try { content = await getDocContent(token, doc.doc_id) } catch {}
+      }
+      upsert.run(doc.doc_id, doc.title, doc.doc_type, doc.url, doc.created_time, doc.modified_time, content)
+      updated++
+    }
+    // 没变化的跳过
+  }
+
+  return { updated, added }
+}

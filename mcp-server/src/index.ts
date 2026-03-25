@@ -251,36 +251,37 @@ server.tool(
 
 // ── 启动 ──────────────────────────────────────────────
 import { quickSync } from './feishu/sync'
-import { syncDocs } from './feishu/docs'
+import { quickDocSync } from './feishu/docs'
 
-let _syncInterval: ReturnType<typeof setInterval> | null = null
-let _docSyncInterval: ReturnType<typeof setInterval> | null = null
+const SYNC_INTERVAL = 15000 // 15秒
+
+async function runSync() {
+  try {
+    const [msgResult, docResult] = await Promise.all([
+      quickSync().catch(e => ({ imported: 0, errors: 1, _err: e.message })),
+      quickDocSync().catch(e => ({ updated: 0, added: 0, _err: e.message })),
+    ])
+    const r = msgResult as any
+    const d = docResult as any
+    if (r.imported > 0) console.error(`[同步] ${r.imported} 条新消息`)
+    if (d.updated > 0 || d.added > 0) console.error(`[同步] 文档: ${d.added} 新增, ${d.updated} 更新`)
+    if (r._err) console.error(`[同步] 消息出错: ${r._err}`)
+    if (d._err) console.error(`[同步] 文档出错: ${d._err}`)
+  } catch (e: any) {
+    console.error(`[同步] 出错: ${e.message}`)
+  }
+}
 
 async function main() {
   const transport = new StdioServerTransport()
   await server.connect(transport)
 
-  // 消息增量同步（每60秒）
-  _syncInterval = setInterval(async () => {
-    try {
-      const r = await quickSync()
-      if (r.imported > 0) console.error(`[增量同步] ${r.imported} 条新消息`)
-    } catch (e: any) {
-      console.error(`[增量同步] 出错: ${e.message}`)
-    }
-  }, 60000)
+  // 启动时立即同步一次
+  runSync()
+  // 之后每15秒同步
+  setInterval(runSync, SYNC_INTERVAL)
 
-  // 文档同步（每30分钟）
-  _docSyncInterval = setInterval(async () => {
-    try {
-      const r = await syncDocs()
-      console.error(`[文档同步] ${r.synced} 个文档`)
-    } catch (e: any) {
-      console.error(`[文档同步] 出错: ${e.message}`)
-    }
-  }, 30 * 60 * 1000)
-
-  console.error('[social-proxy] MCP Server 已启动，消息60s/文档30min自动同步')
+  console.error(`[social-proxy] MCP Server 已启动，每${SYNC_INTERVAL / 1000}s自动同步消息+文档`)
 }
 
 main().catch((err) => {
