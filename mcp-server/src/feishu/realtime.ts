@@ -131,8 +131,7 @@ export async function pollAndSync(): Promise<{ synced: number; suggestions: numb
     const senderOpenId: string = sender?.sender_id?.open_id || ''
     const isSelf = myOpenId && senderOpenId === myOpenId
 
-    // Skip group messages (user can configure this later)
-    if (chatType === 'group') continue
+    // 群聊消息也同步（之前跳过导致遗漏）
 
     const content = parseFeishuContent(msg.message_type, msg.content)
     const createTimeMs = parseInt(msg.create_time || String(event.ts))

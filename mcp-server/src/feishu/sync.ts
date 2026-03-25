@@ -94,20 +94,6 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
   `)
 
   for (const chat of chats) {
-    // 跳过群聊
-    if (chat.chat_type === 'group') {
-      log(`  跳过群聊: ${chat.name}`)
-      result.skipped++
-      continue
-    }
-
-    // 跳过通知类机器人会话（名字含"通知"/"助手"/"bot"等）
-    const skipKeywords = ['通知', '助手', 'bot', 'Bot', '机器人', 'webhook', 'Webhook']
-    if (skipKeywords.some(kw => chat.name.includes(kw))) {
-      log(`  跳过通知会话: ${chat.name}`)
-      result.skipped++
-      continue
-    }
 
     const stateRow = db.prepare(
       `SELECT last_sync_ts FROM feishu_sync_state WHERE chat_id = ?`
@@ -209,22 +195,15 @@ export async function quickSync(): Promise<{ imported: number; errors: number }>
   const myName = getSetting('feishu_user_name')
   const myUserId = getSetting('feishu_user_id')
 
-  // 扫描最近 30 天活跃的聊天，排除明显群聊
+  // 扫描最近 30 天活跃的聊天，不做任何过滤
   const since = (Date.now() - 30 * 24 * 60 * 60 * 1000).toString()
-  const skipKeywords = ['通知', '助手', 'bot', 'Bot', '机器人', 'webhook', 'Webhook', '群', 'Group', 'channel', 'Channel']
-  const activeChats = (db.prepare(`
+  const activeChats = db.prepare(`
     SELECT chat_id, chat_name, chat_type, last_sync_ts
     FROM feishu_sync_state
     WHERE last_sync_ts > ?
     ORDER BY last_sync_ts DESC
     LIMIT 200
-  `).all(since) as { chat_id: string; chat_name: string; chat_type: string; last_sync_ts: string }[])
-    .filter(c => {
-      if (c.chat_type === 'group') return false
-      if (skipKeywords.some(kw => c.chat_name.includes(kw))) return false
-      return true
-    })
-    .slice(0, 80)
+  `).all(since) as { chat_id: string; chat_name: string; chat_type: string; last_sync_ts: string }[]
 
   if (activeChats.length === 0) return { imported: 0, errors: 0 }
 

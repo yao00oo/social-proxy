@@ -214,11 +214,24 @@ server.tool(
 )
 
 // ── 启动 ──────────────────────────────────────────────
+import { quickSync } from './feishu/sync'
+
+let _syncInterval: ReturnType<typeof setInterval> | null = null
+
 async function main() {
   const transport = new StdioServerTransport()
   await server.connect(transport)
-  // MCP server 通过 stderr 打日志，不影响 stdio 通信
-  console.error('[social-proxy] MCP Server 已启动')
+
+  // 定时增量同步（每60秒拉一次最近活跃聊天的新消息）
+  _syncInterval = setInterval(async () => {
+    try {
+      const r = await quickSync()
+      if (r.imported > 0) console.error(`[增量同步] ${r.imported} 条新消息`)
+    } catch (e: any) {
+      console.error(`[增量同步] 出错: ${e.message}`)
+    }
+  }, 60000)
+  console.error('[social-proxy] MCP Server 已启动，增量同步每60秒运行')
 }
 
 main().catch((err) => {
