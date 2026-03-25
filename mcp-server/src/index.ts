@@ -13,6 +13,7 @@ import { getHistory } from './tools/get_history'
 import { sendEmail } from './tools/send_email'
 import { sendFeishuMessage } from './tools/send_feishu_message'
 import { searchMessages } from './tools/search_messages'
+import { getNewMessages, markMessagesRead } from './tools/get_new_messages'
 
 const server = new McpServer({
   name: 'social-proxy',
@@ -170,6 +171,45 @@ server.tool(
     return {
       content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
     }
+  }
+)
+
+// ── Tool: get_new_messages ────────────────────────────
+server.tool(
+  'get_new_messages',
+  '获取最近N分钟的飞书消息（含聊天上下文）。is_at_me=true 表示消息@了我或回复了我的消息，需要优先处理。处理完后可调用 mark_messages_read 标记已读。',
+  {
+    minutes: z.number().optional().describe('时间窗口（分钟），默认5'),
+    limit: z.number().optional().describe('返回条数，默认50'),
+  },
+  async ({ minutes, limit }) => {
+    const msgs = getNewMessages(minutes ?? 5, limit ?? 50)
+    if (msgs.length === 0) {
+      return { content: [{ type: 'text', text: '没有新消息' }] }
+    }
+    const unread = msgs.filter(m => !m.is_read).length
+    const atMe = msgs.filter(m => m.is_at_me).length
+    const text = msgs.map(m => {
+      const history = m.recent_history.map(h =>
+        `  ${h.timestamp.slice(0, 16)} [${h.direction === 'sent' ? '我' : m.contact_name}] ${h.content}`
+      ).join('\n')
+      const tags = [m.is_at_me ? '⚡@我' : '', m.is_read ? '✓已读' : '🆕'].filter(Boolean).join(' ')
+      return `━━━ ID:${m.id} | ${m.contact_name} | ${m.created_at.slice(0, 16)} ${tags} ━━━\n新消息：${m.incoming_content}\n最近记录：\n${history || '  （无）'}`
+    }).join('\n\n')
+    return { content: [{ type: 'text', text: `共 ${msgs.length} 条消息（${unread}条未读，${atMe}条@我）：\n\n${text}` }] }
+  }
+)
+
+// ── Tool: mark_messages_read ──────────────────────────
+server.tool(
+  'mark_messages_read',
+  '将指定 ID 的消息标记为已读（处理完后调用，避免重复提示）',
+  {
+    ids: z.array(z.number()).describe('要标记已读的消息 ID 列表'),
+  },
+  async ({ ids }) => {
+    markMessagesRead(ids)
+    return { content: [{ type: 'text', text: `已标记 ${ids.length} 条消息为已读` }] }
   }
 )
 

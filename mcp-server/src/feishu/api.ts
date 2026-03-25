@@ -128,6 +128,8 @@ export interface FeishuMessage {
   create_time: string  // Unix ms
   msg_type: string
   content: string      // 已解析的纯文本
+  parent_id?: string   // 回复的消息 ID
+  image_key?: string   // 图片/表情的资源 key
 }
 
 // ── 拉取某会话的消息列表（分页） ──────────────────────
@@ -159,6 +161,7 @@ export async function listMessages(
     }
 
     for (const item of res.data?.items || []) {
+      const parsed = parseContent(item.msg_type, item.body?.content)
       messages.push({
         message_id: item.message_id,
         sender_id: item.sender?.id || '',
@@ -166,7 +169,9 @@ export async function listMessages(
         chat_id: chatId,
         create_time: item.create_time,
         msg_type: item.msg_type,
-        content: parseContent(item.msg_type, item.body?.content),
+        content: parsed.text,
+        parent_id: item.parent_id || undefined,
+        image_key: parsed.imageKey,
       })
     }
 
@@ -177,16 +182,17 @@ export async function listMessages(
   return messages
 }
 
-// ── 发送文本消息到指定会话 ────────────────────────────
+// ── 发送文本消息 ──────────────────────────────────────
 export async function sendMessage(
   userToken: string,
-  chatId: string,
+  receiveId: string,
   text: string,
+  receiveIdType: 'open_id' | 'chat_id' = 'chat_id',
 ): Promise<{ message_id: string }> {
   const res = await post(
-    '/im/v1/messages?receive_id_type=chat_id',
+    `/im/v1/messages?receive_id_type=${receiveIdType}`,
     {
-      receive_id: chatId,
+      receive_id: receiveId,
       msg_type: 'text',
       content: JSON.stringify({ text }),
     },
@@ -196,16 +202,44 @@ export async function sendMessage(
   return { message_id: res.data.message_id }
 }
 
+// ── 下载消息中的图片/表情资源 ────────────────────────
+export function downloadImage(
+  userToken: string,
+  messageId: string,
+  imageKey: string,
+): Promise<Buffer> {
+  const url = `${BASE}/im/v1/messages/${messageId}/resources/${imageKey}?type=image`
+  return new Promise((resolve, reject) => {
+    const req = https.request(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${userToken}` },
+    }, (res) => {
+      if (res.headers['content-type']?.includes('json')) {
+        let d = ''
+        res.on('data', c => d += c)
+        res.on('end', () => reject(new Error(`download failed: ${d.slice(0, 200)}`)))
+      } else {
+        const chunks: Buffer[] = []
+        res.on('data', c => chunks.push(c))
+        res.on('end', () => resolve(Buffer.concat(chunks)))
+      }
+    })
+    req.setTimeout(15000, () => { req.destroy(new Error('download timeout')) })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 // ── 解析消息内容为纯文本 ──────────────────────────────
-function parseContent(msgType: string, rawContent: string | undefined): string {
-  if (!rawContent) return '[空消息]'
+function parseContent(msgType: string, rawContent: string | undefined): { text: string; imageKey?: string } {
+  if (!rawContent) return { text: '[空消息]' }
 
   try {
     const body = JSON.parse(rawContent)
 
     switch (msgType) {
       case 'text':
-        return body.text || '[空文本]'
+        return { text: body.text || '[空文本]' }
 
       case 'post': {
         // 富文本：遍历所有 block 提取文本
@@ -223,31 +257,31 @@ function parseContent(msgType: string, rawContent: string | undefined): string {
             .join('')
           if (text) lines.push(text)
         }
-        return lines.join('\n') || '[富文本]'
+        return { text: lines.join('\n') || '[富文本]' }
       }
 
       case 'image':
-        return '[图片]'
+        return { text: '[图片]', imageKey: body.image_key }
 
       case 'file':
-        return `[文件: ${body.file_name || ''}]`
+        return { text: `[文件: ${body.file_name || ''}]` }
 
       case 'audio':
-        return '[语音]'
+        return { text: '[语音]' }
 
       case 'video':
-        return '[视频]'
+        return { text: '[视频]' }
 
       case 'sticker':
-        return '[表情包]'
+        return { text: '[表情包]', imageKey: body.file_key }
 
       case 'interactive':
-        return '[卡片消息]'
+        return { text: '[卡片消息]' }
 
       default:
-        return `[${msgType}]`
+        return { text: `[${msgType}]` }
     }
   } catch {
-    return rawContent.slice(0, 200)
+    return { text: rawContent.slice(0, 200) }
   }
 }

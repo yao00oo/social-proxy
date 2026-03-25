@@ -60,6 +60,13 @@ function initSchema(db: Database.Database) {
       ('smtp_from_name',   ''),
       ('permission_mode',  'suggest');
 
+    -- 飞书用户名 → open_id 映射表（独立于会话，按发消息人建立）
+    CREATE TABLE IF NOT EXISTS feishu_users (
+      open_id  TEXT PRIMARY KEY,
+      name     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_feishu_users_name ON feishu_users(name);
+
     -- 实时消息回复建议表
     CREATE TABLE IF NOT EXISTS reply_suggestions (
       id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,7 +76,8 @@ function initSchema(db: Database.Database) {
       incoming_content TEXT NOT NULL,
       suggestion       TEXT,
       created_at       TEXT NOT NULL,
-      is_read          INTEGER DEFAULT 0
+      is_read          INTEGER DEFAULT 0,
+      is_at_me         INTEGER DEFAULT 0
     );
   `)
 }
