@@ -22,6 +22,10 @@ interface Settings {
   permission_mode: string
   feishu_app_id: string
   feishu_app_secret: string
+  imap_host: string
+  imap_port: string
+  imap_user: string
+  imap_pass: string
 }
 
 const defaultSettings: Settings = {
@@ -33,6 +37,10 @@ const defaultSettings: Settings = {
   permission_mode: 'suggest',
   feishu_app_id: '',
   feishu_app_secret: '',
+  imap_host: '',
+  imap_port: '993',
+  imap_user: '',
+  imap_pass: '',
 }
 
 function DocSyncSection() {
@@ -122,6 +130,11 @@ export default function ConfigPage() {
   const [importResult, setImportResult] = useState<{ imported: number; skipped: number } | null>(null)
   const [importing, setImporting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+
+  // ── 邮件同步 ──────────────────────────────────────
+  const [emailSyncing, setEmailSyncing] = useState(false)
+  const [emailSyncLog, setEmailSyncLog] = useState<string[]>([])
+  const [emailSyncResult, setEmailSyncResult] = useState<any>(null)
 
   // ── 实时消息 ──────────────────────────────────────
   const [realtimeSuggestions, setRealtimeSuggestions] = useState<any[]>([])
@@ -366,52 +379,37 @@ export default function ConfigPage() {
           <div className="mb-5 space-y-3">
             <p className="text-gray-400 text-sm font-medium">如何导出微信聊天记录？</p>
 
-            {/* 方法一：转发到文件传输助手 */}
+            {/* 方法一：电脑端多选复制 */}
             <details className="group" open>
               <summary className="cursor-pointer text-sm text-blue-400 hover:text-blue-300 transition-colors">
-                方法一：多选转发（推荐，最简单）
+                方法一：电脑端多选复制（推荐）
               </summary>
               <ol className="mt-2 ml-4 text-xs text-gray-500 space-y-1.5 list-decimal list-outside">
-                <li>打开微信聊天窗口，<strong className="text-gray-400">长按</strong>一条消息 → 点击「多选」</li>
-                <li>勾选要导出的消息（可一次选多条）</li>
-                <li>点击左下角「转发」→ 选择「<strong className="text-gray-400">文件传输助手</strong>」→ 选择「<strong className="text-gray-400">逐条转发</strong>」</li>
-                <li>电脑端微信打开「文件传输助手」，全选消息 → <strong className="text-gray-400">复制</strong></li>
-                <li>粘贴到文本编辑器，保存为 <code className="text-purple-400">.txt</code> 文件</li>
+                <li>在电脑端微信（Mac / Windows）打开聊天窗口</li>
+                <li>滚动到要导出的起始位置，<strong className="text-gray-400">右键</strong>一条消息 → 点击「多选」</li>
+                <li>勾选需要的消息（可按住 Shift 批量选择）</li>
+                <li>点击底部「合并转发」→ 发送给「<strong className="text-gray-400">文件传输助手</strong>」</li>
+                <li>打开「文件传输助手」→ 点开合并的聊天记录 → <strong className="text-gray-400">全选复制</strong></li>
+                <li>粘贴到文本编辑器（记事本 / TextEdit），保存为 <code className="text-purple-400">.txt</code> 文件</li>
                 <li>在下方上传该文件</li>
               </ol>
               <div className="mt-2 ml-4 p-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded text-xs text-gray-600">
-                格式为每行 <code className="text-purple-400 mx-1">2024-01-01 12:00 张三: 消息内容</code>，
-                「逐条转发」会保留每条消息的发送者和时间
+                复制出的格式类似：
+                <pre className="text-purple-400 mt-1 whitespace-pre-wrap">{'张三 2024/09/16 2:51 PM\n今天下午开会吗？\n李四 2024/09/16 2:52 PM\n好的，三点见'}</pre>
               </div>
             </details>
 
-            {/* 方法二：邮件发送 */}
+            {/* 方法二：手机多选转发 */}
             <details className="group">
               <summary className="cursor-pointer text-sm text-blue-400 hover:text-blue-300 transition-colors">
-                方法二：邮件发送聊天记录
+                方法二：手机多选转发到电脑
               </summary>
               <ol className="mt-2 ml-4 text-xs text-gray-500 space-y-1.5 list-decimal list-outside">
-                <li>打开微信聊天窗口 → 点击右上角「...」→ 「查找聊天记录」</li>
-                <li>选择「日期」筛选需要的时间范围</li>
-                <li>长按消息 → 「多选」→ 全选该范围内的消息</li>
-                <li>点击左下角「转发」→ 选择发送到自己的<strong className="text-gray-400">邮箱</strong></li>
-                <li>在邮箱中收到聊天记录，复制正文保存为 <code className="text-purple-400">.txt</code> 文件</li>
+                <li>手机微信打开聊天 → <strong className="text-gray-400">长按</strong>消息 → 「多选」</li>
+                <li>勾选消息后点击底部「合并转发」→ 发给「<strong className="text-gray-400">文件传输助手</strong>」</li>
+                <li>在电脑端微信打开「文件传输助手」→ 点开合并记录 → 全选复制</li>
+                <li>粘贴到文本编辑器，保存为 <code className="text-purple-400">.txt</code> 后上传</li>
               </ol>
-            </details>
-
-            {/* 方法三：电脑端直接复制 */}
-            <details className="group">
-              <summary className="cursor-pointer text-sm text-blue-400 hover:text-blue-300 transition-colors">
-                方法三：电脑端直接复制（少量消息）
-              </summary>
-              <ol className="mt-2 ml-4 text-xs text-gray-500 space-y-1.5 list-decimal list-outside">
-                <li>在电脑端微信打开聊天窗口</li>
-                <li>向上滚动到需要的位置，按住 <kbd className="text-gray-400 bg-[#1f1f1f] px-1 rounded">Shift</kbd> 点击第一条和最后一条消息进行多选</li>
-                <li>右键 →「复制」，粘贴到文本编辑器保存为 <code className="text-purple-400">.txt</code></li>
-              </ol>
-              <div className="mt-2 ml-4 p-2 bg-[#0a0a0a] border border-[#2a2a2a] rounded text-xs text-gray-600">
-                适合少量消息。电脑端复制的格式通常已经包含时间和发送者信息
-              </div>
             </details>
           </div>
 
@@ -728,8 +726,8 @@ export default function ConfigPage() {
           )}
         </Section>
 
-        {/* ── 06 权限 + SMTP ── */}
-        <Section title="07 权限 + SMTP 配置">
+        {/* ── 06 邮件配置 ── */}
+        <Section title="07 邮件配置">
           <div className="mb-5">
             <p className="text-gray-400 text-xs mb-2">发送权限</p>
             <div className="flex gap-3">
@@ -750,6 +748,8 @@ export default function ConfigPage() {
             </div>
           </div>
 
+          {/* SMTP 发件配置 */}
+          <p className="text-gray-400 text-xs mb-2 mt-4">SMTP（发件）</p>
           <div className="grid grid-cols-2 gap-4 mb-5">
             <Input label="SMTP Host" value={settings.smtp_host} onChange={(v) => setSettings({ ...settings, smtp_host: v })} placeholder="smtp.gmail.com" />
             <Input label="端口" value={settings.smtp_port} onChange={(v) => setSettings({ ...settings, smtp_port: v })} placeholder="587" />
@@ -760,10 +760,50 @@ export default function ConfigPage() {
             </div>
           </div>
 
-          <button onClick={saveSettings} disabled={settingsSaving}
-            className="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm transition-colors disabled:opacity-50">
-            {settingsSaved ? '已保存' : settingsSaving ? '保存中...' : '保存配置'}
-          </button>
+          {/* IMAP 收件配置 */}
+          <p className="text-gray-400 text-xs mb-2 mt-4">IMAP（收件同步）</p>
+          <p className="text-gray-600 text-xs mb-3">
+            同步收件箱和已发送邮件到本地，作为联系人沟通记录。不填则自动从 SMTP 推导（smtp.→imap.）。
+          </p>
+          <div className="grid grid-cols-2 gap-4 mb-5">
+            <Input label="IMAP Host" value={settings.imap_host} onChange={(v) => setSettings({ ...settings, imap_host: v })} placeholder="imap.gmail.com（可留空自动推导）" />
+            <Input label="端口" value={settings.imap_port} onChange={(v) => setSettings({ ...settings, imap_port: v })} placeholder="993" />
+            <Input label="邮箱账号" value={settings.imap_user} onChange={(v) => setSettings({ ...settings, imap_user: v })} placeholder="同 SMTP（可留空）" />
+            <Input label="密码 / App Password" type="password" value={settings.imap_pass} onChange={(v) => setSettings({ ...settings, imap_pass: v })} placeholder="同 SMTP（可留空）" />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button onClick={saveSettings} disabled={settingsSaving}
+              className="px-5 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-sm transition-colors disabled:opacity-50">
+              {settingsSaved ? '已保存' : settingsSaving ? '保存中...' : '保存配置'}
+            </button>
+            <button
+              onClick={async () => {
+                setEmailSyncing(true); setEmailSyncLog([])
+                await fetch('/api/email-sync', { method: 'POST' })
+                const poll = setInterval(async () => {
+                  const s = await fetch('/api/email-sync').then(r => r.json())
+                  setEmailSyncLog(s.log || [])
+                  if (!s.running) { clearInterval(poll); setEmailSyncing(false); setEmailSyncResult(s.lastResult); fetchContacts() }
+                }, 1500)
+              }}
+              disabled={emailSyncing}
+              className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm transition-colors disabled:opacity-50">
+              {emailSyncing ? '同步中...' : '同步邮件'}
+            </button>
+            {emailSyncResult && !emailSyncResult.error && (
+              <span className="text-sm text-gray-400">
+                收件 <span className="text-green-400 font-mono">{emailSyncResult.inbox}</span>，
+                已发送 <span className="text-green-400 font-mono">{emailSyncResult.sent}</span>
+              </span>
+            )}
+          </div>
+          {emailSyncLog.length > 0 && (
+            <div className="bg-[#0a0a0a] border border-[#2a2a2a] rounded-lg p-3 mt-4 h-36 overflow-y-auto font-mono text-xs text-gray-400 space-y-0.5">
+              {emailSyncLog.map((l, i) => <div key={i}>{l}</div>)}
+              {emailSyncing && <div className="text-blue-400 animate-pulse">同步中...</div>}
+            </div>
+          )}
         </Section>
 
         {/* ── 07 安装命令 ── */}

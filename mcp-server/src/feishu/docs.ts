@@ -161,7 +161,7 @@ export async function syncDocs(onProgress?: (msg: string) => void): Promise<{ to
   }
   log(`  消息中发现 ${msgTokens.length} 个链接，新增 ${wikiAdded} 个 wiki 文档`)
 
-  const allDocs = [...docMap.values()]
+  const allDocs = Array.from(docMap.values())
   log(`📄 合并去重后: ${allDocs.length} 个文档`)
 
   const upsert = db.prepare(`
@@ -237,7 +237,7 @@ function extractDocTokensFromMessages(db: ReturnType<typeof getDb>, minutes = 0)
       tokens.add(m[1])
     }
   }
-  return [...tokens]
+  return Array.from(tokens)
 }
 
 // 增量文档同步：云文档 + 消息中的 wiki 链接
@@ -283,7 +283,7 @@ export async function quickDocSync(): Promise<{ updated: number; added: number }
 
   let updated = 0, added = 0
 
-  for (const doc of docMap.values()) {
+  for (const doc of Array.from(docMap.values())) {
     const existing = getExisting.get(doc.doc_id) as any
     if (!existing) {
       let content = ''

@@ -23,11 +23,13 @@ function initSchema(db: Database.Database) {
       contact_name TEXT NOT NULL,
       direction    TEXT NOT NULL CHECK(direction IN ('sent', 'received')),
       content      TEXT NOT NULL,
-      timestamp    TEXT NOT NULL
+      timestamp    TEXT NOT NULL,
+      source_id    TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_messages_contact ON messages(contact_name);
     CREATE INDEX IF NOT EXISTS idx_messages_ts      ON messages(timestamp);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id) WHERE source_id IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS contacts (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -48,6 +50,10 @@ function initSchema(db: Database.Database) {
       ('smtp_user',       ''),
       ('smtp_pass',       ''),
       ('smtp_from_name',  ''),
-      ('permission_mode', 'suggest');
+      ('permission_mode', 'suggest'),
+      ('imap_host',       ''),
+      ('imap_port',       '993'),
+      ('imap_user',       ''),
+      ('imap_pass',       '');
   `)
 }

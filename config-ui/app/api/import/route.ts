@@ -2,8 +2,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 
-// TXT 格式：2024-01-01 12:00 张三: 消息内容
+// 旧 TXT 格式：2024-01-01 12:00 张三: 消息内容
 const LINE_RE = /^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?)\s+(.+?):\s+(.+)$/
+// 微信电脑端多选复制格式：张三 2024/09/16 2:51 PM  或  张三 2024/09/16 下午2:51
+const WECHAT_HEADER_RE = /^(.+?)\s+(\d{4}\/\d{2}\/\d{2}\s+(?:(?:AM|PM|上午|下午|凌晨|晚上)\s*)?\d{1,2}:\d{2}(?:\s*(?:AM|PM|上午|下午|凌晨|晚上))?)$/
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g
 
 // 简易 CSV 行解析（处理引号内的逗号）
@@ -149,6 +151,26 @@ function importSimpleCSV(lines: string[], db: ReturnType<typeof getDb>) {
   return { imported, skipped }
 }
 
+// 把微信复制的时间 "2024/09/16 2:51 PM" 转成标准格式 "2024-09-16 14:51"
+function normalizeWechatTime(raw: string): string {
+  // 处理 AM/PM 或 上午/下午
+  let ts = raw.trim()
+  let isPM = false
+  let isAM = false
+  if (/PM|下午|晚上/i.test(ts)) isPM = true
+  if (/AM|上午|凌晨/i.test(ts)) isAM = true
+  ts = ts.replace(/\s*(AM|PM|上午|下午|凌晨|晚上)\s*/gi, ' ').trim()
+
+  // 解析 YYYY/MM/DD H:MM
+  const m = ts.match(/(\d{4})\/(\d{2})\/(\d{2})\s+(\d{1,2}):(\d{2})/)
+  if (!m) return raw
+  let [, y, mo, d, h, min] = m
+  let hour = parseInt(h)
+  if (isPM && hour < 12) hour += 12
+  if (isAM && hour === 12) hour = 0
+  return `${y}-${mo}-${d} ${hour.toString().padStart(2, '0')}:${min}`
+}
+
 function importTXT(text: string, db: ReturnType<typeof getDb>) {
   const lines = text.split('\n')
   const insertMessage = db.prepare(
@@ -162,26 +184,78 @@ function importTXT(text: string, db: ReturnType<typeof getDb>) {
       email = CASE WHEN email IS NULL OR email = '' THEN excluded.email ELSE email END
   `)
 
+  // 先检测是不是微信电脑端多选复制的格式（有 YYYY/MM/DD 的 header 行）
+  const isWechatFormat = lines.some(l => WECHAT_HEADER_RE.test(l.trim()))
+
   let imported = 0, skipped = 0
-  const run = db.transaction(() => {
+
+  if (isWechatFormat) {
+    // 微信格式：header 行 + 下一行是内容（可能多行内容）
+    // 张三 2024/09/16 2:51 PM
+    // 消息内容（可能多行）
+    const messages: { sender: string; timestamp: string; content: string }[] = []
+    let current: { sender: string; timestamp: string; lines: string[] } | null = null
+
     for (const line of lines) {
       const trimmed = line.trim()
-      if (!trimmed) continue
-
-      const match = LINE_RE.exec(trimmed)
-      if (!match) { skipped++; continue }
-
-      const [, timestamp, sender, content] = match
-      const isSelf = sender === '我' || sender === 'Me' || sender === 'me'
-      if (isSelf) { skipped++; continue }
-
-      const emails = content.match(EMAIL_RE)
-      insertMessage.run(sender, 'received', content, timestamp)
-      upsertContact.run(sender, emails?.[0] || null, timestamp)
-      imported++
+      const headerMatch = WECHAT_HEADER_RE.exec(trimmed)
+      if (headerMatch) {
+        // 保存上一条消息
+        if (current && current.lines.length > 0) {
+          messages.push({ sender: current.sender, timestamp: current.timestamp, content: current.lines.join('\n') })
+        }
+        current = {
+          sender: headerMatch[1].trim(),
+          timestamp: normalizeWechatTime(headerMatch[2]),
+          lines: [],
+        }
+      } else if (current) {
+        // 内容行（包括空行也属于当前消息）
+        if (trimmed || current.lines.length > 0) {
+          current.lines.push(trimmed)
+        }
+      }
     }
-  })
-  run()
+    // 最后一条
+    if (current && current.lines.length > 0) {
+      messages.push({ sender: current.sender, timestamp: current.timestamp, content: current.lines.join('\n') })
+    }
+
+    const run = db.transaction(() => {
+      for (const msg of messages) {
+        const isSelf = msg.sender === '我' || msg.sender === 'Me' || msg.sender === 'me'
+        const direction = isSelf ? 'sent' : 'received'
+        // 跳过非文本消息
+        if (/^\[(图片|表情|动画表情|语音|视频|文件|红包|位置|链接)\]$/.test(msg.content.trim())) {
+          skipped++; continue
+        }
+        const emails = msg.content.match(EMAIL_RE)
+        insertMessage.run(msg.sender, direction, msg.content, msg.timestamp)
+        if (!isSelf) upsertContact.run(msg.sender, emails?.[0] || null, msg.timestamp)
+        imported++
+      }
+    })
+    run()
+  } else {
+    // 旧的单行格式：2024-01-01 12:00 张三: 消息内容
+    const run = db.transaction(() => {
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) continue
+        const match = LINE_RE.exec(trimmed)
+        if (!match) { skipped++; continue }
+        const [, timestamp, sender, content] = match
+        const isSelf = sender === '我' || sender === 'Me' || sender === 'me'
+        const direction = isSelf ? 'sent' : 'received'
+        const emails = content.match(EMAIL_RE)
+        insertMessage.run(sender, direction, content, timestamp)
+        if (!isSelf) upsertContact.run(sender, emails?.[0] || null, timestamp)
+        imported++
+      }
+    })
+    run()
+  }
+
   return { imported, skipped }
 }
 

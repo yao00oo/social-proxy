@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^9.4.3",
+    "imapflow": "^1.2.17",
     "next": "14.2.3",
     "react": "^18",
     "react-dom": "^18"
