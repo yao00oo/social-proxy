@@ -1,9 +1,9 @@
-import NextAuth from 'next-auth'
-import Google from 'next-auth/providers/google'
+import type { NextAuthOptions } from 'next-auth'
+import GoogleProvider from 'next-auth/providers/google'
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+export const authOptions: NextAuthOptions = {
   providers: [
-    Google({
+    GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID!,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
     }),
@@ -18,14 +18,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     jwt({ token, user }) {
       if (user) {
         token.id = user.id
+        token.email = user.email
       }
       return token
     },
     session({ session, token }) {
-      if (session.user && token.id) {
+      if (session.user) {
         session.user.id = token.id as string
       }
       return session
     },
   },
-})
+}
