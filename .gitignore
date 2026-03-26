@@ -20,3 +20,5 @@ config-ui/.next/
 # Logs
 *.log
 nohup.out
+.vercel
+.env.vercel
