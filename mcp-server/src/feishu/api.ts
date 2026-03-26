@@ -35,13 +35,39 @@ function post(path: string, body: object, headers: Record<string, string> = {}):
   }, bodyStr)
 }
 
-function get(path: string, token: string, params: Record<string, string> = {}): Promise<any> {
+export function get(path: string, token: string, params: Record<string, string> = {}): Promise<any> {
   const qs = new URLSearchParams(params).toString()
   const url = `${BASE}${path}${qs ? '?' + qs : ''}`
   return request(url, {
     method: 'GET',
     headers: { Authorization: `Bearer ${token}` },
   })
+}
+
+// ── 带重试的 GET 请求 ────────────────────────────────
+export class TokenExpiredError extends Error {
+  constructor(msg: string) { super(msg); this.name = 'TokenExpiredError' }
+}
+
+async function getWithRetry(path: string, token: string, params: Record<string, string>, maxRetries = 3): Promise<any> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await get(path, token, params)
+    if (res.code === 0 || res.code === 230002 || res.code === 102004) return res
+    if (res.code === 99991403) throw new TokenExpiredError(res.msg)
+    // 限流：退避重试
+    if (res.code === 99991400) {
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)))
+        continue
+      }
+      return res
+    }
+    if (attempt < maxRetries) {
+      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)))
+      continue
+    }
+    return res
+  }
 }
 
 // ── 获取 App Access Token ─────────────────────────────
@@ -141,7 +167,7 @@ export async function listMessages(
   const messages: FeishuMessage[] = []
   let pageToken = ''
   let pages = 0
-  const MAX_PAGES = 200
+  const MAX_PAGES = 1000
 
   while (pages++ < MAX_PAGES) {
     const params: Record<string, string> = {
@@ -153,9 +179,8 @@ export async function listMessages(
     if (startTime) params.start_time = startTime
     if (pageToken) params.page_token = pageToken
 
-    const res = await get('/im/v1/messages', userToken, params)
+    const res = await getWithRetry('/im/v1/messages', userToken, params)
     if (res.code !== 0) {
-      // 没权限的群跳过
       if (res.code === 230002 || res.code === 102004) break
       throw new Error(`listMessages(${chatId}) failed: ${res.msg} (code=${res.code})`)
     }
@@ -179,6 +204,10 @@ export async function listMessages(
     pageToken = res.data.page_token
   }
 
+  if (pages > MAX_PAGES) {
+    console.warn(`[feishu] listMessages hit MAX_PAGES (${MAX_PAGES}) for chat ${chatId}, some messages may be missing`)
+  }
+
   return messages
 }
 
@@ -200,6 +229,39 @@ export async function sendMessage(
   )
   if (res.code !== 0) throw new Error(`sendMessage failed: ${res.msg} (code=${res.code})`)
   return { message_id: res.data.message_id }
+}
+
+// ── 发送消息并获取 chat_id（用于发现 p2p 会话） ──────
+export async function sendAndGetChatId(
+  userToken: string,
+  openId: string,
+  text: string = '.',
+): Promise<{ chat_id: string; message_id: string }> {
+  const res = await post(
+    `/im/v1/messages?receive_id_type=open_id`,
+    {
+      receive_id: openId,
+      msg_type: 'text',
+      content: JSON.stringify({ text }),
+    },
+    { Authorization: `Bearer ${userToken}` },
+  )
+  if (res.code !== 0) throw new Error(`sendAndGetChatId failed: ${res.msg} (code=${res.code})`)
+  return { chat_id: res.data.chat_id, message_id: res.data.message_id }
+}
+
+// ── 撤回消息 ────────────────────────────────────────
+export async function deleteMessage(userToken: string, messageId: string): Promise<void> {
+  const bodyStr = '{}'
+  const res = await request(`${BASE}/im/v1/messages/${messageId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${userToken}`,
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Length': Buffer.byteLength(bodyStr),
+    },
+  }, bodyStr)
+  if (res.code !== 0) throw new Error(`deleteMessage failed: ${res.msg} (code=${res.code})`)
 }
 
 // ── 获取用户详细信息（手机、邮箱等） ─────────────────

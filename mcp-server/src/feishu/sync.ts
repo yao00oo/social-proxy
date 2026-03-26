@@ -2,14 +2,22 @@
 // 全量拉取 + 增量同步（基于每个会话的 last_sync_ts）
 
 import { getDb } from '../db'
-import { listChats, listMessages, downloadImage, getUserInfo, getAppAccessToken } from './api'
+import { listChats, listMessages, downloadImage, getUserInfo, getAppAccessToken, TokenExpiredError, get, sendAndGetChatId, deleteMessage } from './api'
 import { getSetting, saveSetting, ensureValidToken } from './auth'
 import { postSync, NewMessages } from '../sync/post-sync'
+import { generateReplySuggestions } from '../sync/reply-suggest'
 import path from 'path'
 import fs from 'fs'
 
 const IMAGES_DIR = path.join(__dirname, '../../../images')
 function ensureImagesDir() { if (!fs.existsSync(IMAGES_DIR)) fs.mkdirSync(IMAGES_DIR, { recursive: true }) }
+
+// 将毫秒时间戳转为本地时间字符串 "YYYY-MM-DD HH:mm:ss"
+function toLocalTime(ms: number): string {
+  const d = new Date(ms)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
 
 export interface SyncResult {
   chats: number
@@ -41,7 +49,7 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
     onProgress?.(msg)
   }
 
-  const userToken = await ensureValidToken()
+  let userToken = await ensureValidToken()
   const myName = getSetting('feishu_user_name')
   const myUserId = getSetting('feishu_user_id')
 
@@ -98,8 +106,8 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
     ).get(chat.chat_id) as any
 
     const lastTs = stateRow?.last_sync_ts || '0'
-    // 飞书 API start_time 是 Unix 秒
-    const startTime = lastTs !== '0' ? (Math.floor(parseInt(lastTs) / 1000)).toString() : undefined
+    // 飞书 API start_time 是 Unix 秒，减 1 秒制造重叠窗口避免丢消息（靠 INSERT OR IGNORE 去重）
+    const startTime = lastTs !== '0' ? (Math.floor((parseInt(lastTs) - 1000) / 1000)).toString() : undefined
 
     log(`  同步: ${chat.name} (从 ${lastTs === '0' ? '最早' : new Date(parseInt(lastTs)).toLocaleString()})`)
 
@@ -116,7 +124,7 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
 
       const run = db.transaction(() => {
         for (const msg of msgs) {
-          const ts = new Date(parseInt(msg.create_time)).toISOString().replace('T', ' ').slice(0, 19)
+          const ts = toLocalTime(parseInt(msg.create_time))
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
 
@@ -149,9 +157,43 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
         newMsgsPerChat.set(chat.chat_id, { chat_name: chat.name, chat_type: chat.chat_type, count: chatImported })
       }
     } catch (err: any) {
-      const errMsg = `${chat.name}: ${err.message}`
-      result.errors.push(errMsg)
-      log(`    ⚠ ${errMsg}`)
+      if (err instanceof TokenExpiredError) {
+        log(`    ⚠ token 过期，刷新后重试...`)
+        try {
+          userToken = await ensureValidToken()
+          const retryMsgs = await listMessages(userToken, chat.chat_id, startTime)
+          let retryTs = lastTs
+          let retryImported = 0
+          const retryRun = db.transaction(() => {
+            for (const msg of retryMsgs) {
+              const ts = toLocalTime(parseInt(msg.create_time))
+              const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
+              const direction = isSelf ? 'sent' : 'received'
+              const contactName = chat.chat_type === 'p2p' && isSelf ? chat.name : (chat.chat_type === 'p2p' ? msg.sender_name : chat.name)
+              insertMessage.run(contactName, direction, msg.content, ts, msg.message_id)
+              if (!isSelf) {
+                upsertContact.run(contactName, msg.sender_id || null, ts)
+                if (msg.sender_id && msg.sender_name && !msg.sender_name.startsWith('ou_')) {
+                  upsertFeishuUser.run(msg.sender_id, msg.sender_name)
+                }
+              }
+              retryImported++
+              if (msg.create_time > retryTs) retryTs = msg.create_time
+            }
+          })
+          retryRun()
+          updateState.run(retryTs, chat.chat_id)
+          result.imported += retryImported
+          log(`    → 重试成功，导入 ${retryImported} 条`)
+        } catch (retryErr: any) {
+          result.errors.push(`${chat.name}: 重试失败 ${retryErr.message}`)
+          log(`    ⚠ 重试失败: ${retryErr.message}`)
+        }
+      } else {
+        const errMsg = `${chat.name}: ${err.message}`
+        result.errors.push(errMsg)
+        log(`    ⚠ ${errMsg}`)
+      }
     }
   }
 
@@ -214,18 +256,18 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
 export async function quickSync(): Promise<{ imported: number; errors: number }> {
   const db = getDb()
 
-  const userToken = await ensureValidToken()
+  let userToken = await ensureValidToken()
   const myName = getSetting('feishu_user_name')
   const myUserId = getSetting('feishu_user_id')
 
-  // 扫描最近 30 天活跃的聊天，不做任何过滤
-  const since = (Date.now() - 30 * 24 * 60 * 60 * 1000).toString()
+  // 扫描最近 90 天活跃的聊天
+  const since = (Date.now() - 90 * 24 * 60 * 60 * 1000).toString()
   const activeChats = db.prepare(`
     SELECT chat_id, chat_name, chat_type, last_sync_ts
     FROM feishu_sync_state
-    WHERE last_sync_ts > ?
+    WHERE last_sync_ts > ? OR last_sync_ts = '0'
     ORDER BY last_sync_ts DESC
-    LIMIT 200
+    LIMIT 500
   `).all(since) as { chat_id: string; chat_name: string; chat_type: string; last_sync_ts: string }[]
 
   if (activeChats.length === 0) return { imported: 0, errors: 0 }
@@ -267,7 +309,7 @@ export async function quickSync(): Promise<{ imported: number; errors: number }>
 
   for (const chat of activeChats) {
     try {
-      const startTime = (Math.floor(parseInt(chat.last_sync_ts) / 1000)).toString()
+      const startTime = (Math.floor((parseInt(chat.last_sync_ts) - 1000) / 1000)).toString()
       const msgs = await listMessages(userToken, chat.chat_id, startTime)
       if (msgs.length === 0) continue
 
@@ -283,7 +325,7 @@ export async function quickSync(): Promise<{ imported: number; errors: number }>
 
       const run = db.transaction(() => {
         for (const msg of msgs) {
-          const ts = new Date(parseInt(msg.create_time)).toISOString().replace('T', ' ').slice(0, 19)
+          const ts = toLocalTime(parseInt(msg.create_time))
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
           // p2p 聊天用 chat_name（即对方姓名），比 sender_name 更可靠
@@ -333,13 +375,163 @@ export async function quickSync(): Promise<{ imported: number; errors: number }>
         }
       }
 
-      // start_time +1ms 避免下次重复拉取同一条消息
-      const nextTs = (parseInt(newTs) + 1).toString()
-      updateState.run(nextTs, chat.chat_id)
-    } catch {
+      updateState.run(newTs, chat.chat_id)
+    } catch (err: any) {
+      if (err instanceof TokenExpiredError) {
+        try { userToken = await ensureValidToken() } catch { /* ignore */ }
+      }
       errors++
     }
   }
 
+  // 对新消息生成回复建议（异步，不阻塞返回）
+  if (imported > 0) {
+    generateReplySuggestions().catch(e =>
+      console.error(`[回复建议] 生成失败: ${e.message}`)
+    )
+  }
+
   return { imported, errors }
+}
+
+// ── 发现 p2p 私聊：给通讯录里的同事发消息拿 chat_id，立刻撤回 ──
+export async function discoverP2pChats(onProgress?: (msg: string) => void): Promise<{ discovered: number; errors: number }> {
+  const db = getDb()
+  const log = (msg: string) => { console.error(msg); onProgress?.(msg) }
+
+  let userToken: string
+  try {
+    userToken = await ensureValidToken()
+  } catch {
+    return { discovered: 0, errors: 0 }
+  }
+
+  // 找所有有 open_id 的内部用户，且还没有 p2p chat_id 的
+  const existingP2p = new Set(
+    (db.prepare(`SELECT chat_id FROM feishu_sync_state WHERE chat_type = 'p2p'`).all() as any[]).map(r => r.chat_id)
+  )
+
+  const users = db.prepare(`SELECT open_id, name FROM feishu_users WHERE open_id LIKE 'ou_%' AND (email IS NOT NULL AND email != '')`).all() as { open_id: string; name: string }[]
+
+  // 排除已经发现了 p2p 的用户（通过 feishu_sync_state 中 chat_name 匹配）
+  const knownNames = new Set(
+    (db.prepare(`SELECT chat_name FROM feishu_sync_state WHERE chat_type = 'p2p'`).all() as any[]).map(r => r.chat_name)
+  )
+  const myUserId = getSetting('feishu_user_id')
+  const toDiscover = users.filter(u => !knownNames.has(u.name) && !knownNames.has(u.name + ' (私聊)') && u.open_id !== myUserId)
+
+  if (toDiscover.length === 0) return { discovered: 0, errors: 0 }
+
+  log(`[p2p发现] 需要发现 ${toDiscover.length} 个同事的私聊 chat_id`)
+
+  const upsertState = db.prepare(`
+    INSERT OR IGNORE INTO feishu_sync_state(chat_id, chat_name, chat_type, last_sync_ts)
+    VALUES (?, ?, 'p2p', '0')
+  `)
+
+  let discovered = 0, errors = 0
+
+  for (const user of toDiscover) {
+    try {
+      // 发消息拿 chat_id
+      const { chat_id, message_id } = await sendAndGetChatId(userToken, user.open_id)
+      // 立刻撤回
+      try { await deleteMessage(userToken, message_id) } catch {}
+
+      upsertState.run(chat_id, user.name)
+      discovered++
+      log(`  ✓ ${user.name} → ${chat_id}`)
+
+      // 控制速率，避免限流
+      await new Promise(r => setTimeout(r, 500))
+    } catch (e: any) {
+      if (e instanceof TokenExpiredError) {
+        try { userToken = await ensureValidToken() } catch { break }
+      }
+      errors++
+      log(`  ✗ ${user.name}: ${e.message?.slice(0, 60)}`)
+      await new Promise(r => setTimeout(r, 1000))
+    }
+  }
+
+  log(`[p2p发现] 完成: 发现 ${discovered} 个，失败 ${errors} 个`)
+  return { discovered, errors }
+}
+
+// ── 兜底审计：抽查消息完整性，发现缺失自动回退同步位点 ──
+export async function auditSync(): Promise<{ checked: number; gaps: number; reset: number }> {
+  const db = getDb()
+
+  let userToken: string
+  try {
+    userToken = await ensureValidToken()
+  } catch {
+    return { checked: 0, gaps: 0, reset: 0 }
+  }
+
+  // 取最近 90 天活跃的 chat
+  const since = (Date.now() - 90 * 24 * 60 * 60 * 1000).toString()
+  const chats = db.prepare(`
+    SELECT chat_id, chat_name, last_sync_ts
+    FROM feishu_sync_state
+    WHERE last_sync_ts > ?
+    ORDER BY last_sync_ts DESC
+    LIMIT 500
+  `).all(since) as { chat_id: string; chat_name: string; last_sync_ts: string }[]
+
+  const checkExists = db.prepare(`SELECT 1 FROM messages WHERE source_id = ? LIMIT 1`)
+  const resetState = db.prepare(`UPDATE feishu_sync_state SET last_sync_ts = ? WHERE chat_id = ?`)
+
+  let checked = 0
+  let gaps = 0
+  let reset = 0
+
+  for (const chat of chats) {
+    try {
+      // 拉最近 1 页（50 条）消息，从最新往回
+      const res = await get('/im/v1/messages', userToken, {
+        container_id: chat.chat_id,
+        container_id_type: 'chat',
+        sort_type: 'ByCreateTimeDesc',
+        page_size: '50',
+      })
+      if (res.code !== 0) continue
+
+      const items = res.data?.items || []
+      if (items.length === 0) continue
+      checked++
+
+      // 检查这 50 条消息在 DB 里是否都存在
+      let missingCount = 0
+      let earliestMissingTs = ''
+
+      for (const item of items) {
+        if (!checkExists.get(item.message_id)) {
+          missingCount++
+          if (!earliestMissingTs || item.create_time < earliestMissingTs) {
+            earliestMissingTs = item.create_time
+          }
+        }
+      }
+
+      if (missingCount > 0) {
+        gaps++
+        // 回退 last_sync_ts 到最早缺失消息之前 10 秒
+        const resetTs = (parseInt(earliestMissingTs) - 10000).toString()
+        resetState.run(resetTs, chat.chat_id)
+        reset++
+        console.error(`[audit] ${chat.chat_name}: 发现 ${missingCount} 条缺失，已回退同步位点`)
+      }
+    } catch (err: any) {
+      if (err instanceof TokenExpiredError) {
+        try { userToken = await ensureValidToken() } catch { break }
+      }
+    }
+  }
+
+  if (gaps > 0) {
+    console.error(`[audit] 审计完成: 检查 ${checked} 个会话, ${gaps} 个有缺失, 已回退 ${reset} 个`)
+  }
+
+  return { checked, gaps, reset }
 }

@@ -1,6 +1,17 @@
 // Social Proxy MCP Server 入口
 // 通过 stdio 与 Claude 通信，暴露三个工具: get_contacts / get_history / send_email
 
+// 加载项目根目录的 .env 文件
+import fs from 'fs'
+import path from 'path'
+const envPath = path.resolve(__dirname, '../../.env')
+if (fs.existsSync(envPath)) {
+  for (const line of fs.readFileSync(envPath, 'utf-8').split('\n')) {
+    const match = line.match(/^\s*([^#=]+?)\s*=\s*(.+?)\s*$/)
+    if (match && !process.env[match[1]]) process.env[match[1]] = match[2]
+  }
+}
+
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -16,6 +27,9 @@ import { searchMessages } from './tools/search_messages'
 import { getNewMessages, markMessagesRead } from './tools/get_new_messages'
 import { getApprovalTasks, getApprovalDetail } from './tools/get_approvals'
 
+// MCP 模式下的用户 ID（本地单用户）
+const USER_ID = process.env.DEFAULT_USER_ID || 'local'
+
 const server = new McpServer({
   name: 'social-proxy',
   version: '1.0.0',
@@ -30,8 +44,8 @@ server.tool(
     limit: z.number().optional().describe('返回数量，默认50，最大200'),
   },
   async ({ search, limit }) => {
-    const contacts = getContacts(search, Math.min(limit ?? 50, 200))
-    const total = getDb().prepare('SELECT COUNT(*) as n FROM contacts').get() as any
+    const contacts = getContacts(USER_ID, search, Math.min(limit ?? 50, 200))
+    const total = getDb().prepare('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?').get(USER_ID) as any
     return {
       content: [
         {
@@ -51,7 +65,7 @@ server.tool(
     search: z.string().optional().describe('按会话名或摘要内容关键词搜索'),
   },
   async ({ search }) => {
-    const summaries = getSummaries(search)
+    const summaries = getSummaries(USER_ID, search)
     return {
       content: [{ type: 'text', text: formatSummaries(summaries) }],
     }
@@ -77,7 +91,7 @@ server.tool(
   '获取飞书文档摘要列表，可按关键词搜索标题或内容，用于快速定位相关文档。找到目标后用 get_doc_content 读取完整内容。',
   { search: z.string().optional().describe('按标题或内容关键词搜索') },
   async ({ search }) => {
-    const docs = getDocSummaries(search)
+    const docs = getDocSummaries(USER_ID, search)
     const text = docs.map(d =>
       `【${d.title}】(${d.doc_type}) ${d.modified_time?.slice(0, 10)} doc_id:${d.doc_id}\n${d.summary || '暂无摘要'}\n${d.url}`
     ).join('\n\n---\n\n')
@@ -94,7 +108,7 @@ server.tool(
   { doc_id: z.string().describe('文档ID，从 get_doc_summaries 结果的 doc_id 字段获取') },
   async ({ doc_id }) => {
     const { getDocContent } = await import('./tools/get_doc_summaries')
-    const doc = await getDocContent(doc_id)
+    const doc = await getDocContent(USER_ID, doc_id)
     if (!doc) {
       return { content: [{ type: 'text', text: '文档不存在' }] }
     }
@@ -112,7 +126,7 @@ server.tool(
   '全量联系人统计分析：失联分布、最活跃、最久未联系、最近活跃等，用于整体了解社交关系现状',
   {},
   async () => {
-    const stats = getStats()
+    const stats = getStats(USER_ID)
     return {
       content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }],
     }
@@ -128,7 +142,7 @@ server.tool(
     limit: z.number().optional().describe('返回最近原文条数，默认50条'),
   },
   async ({ contact_name, limit }) => {
-    const result = getHistory(contact_name, limit ?? 50)
+    const result = getHistory(USER_ID, contact_name, limit ?? 50)
     let text = `消息总数：${result.total} 条\n`
     if (result.summary) {
       text += `\n【历史背景摘要（${result.summaryRange}）】\n${result.summary}\n`
@@ -162,19 +176,19 @@ server.tool(
     let total: number
 
     if (contact_name) {
-      total = (db.prepare(`SELECT COUNT(*) as n FROM messages WHERE contact_name = ?`).get(contact_name) as any).n
+      total = (db.prepare(`SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?`).get(contact_name, USER_ID) as any).n
       rows = db.prepare(`
         SELECT contact_name, direction, content, timestamp FROM messages
-        WHERE contact_name = ? ORDER BY timestamp ASC LIMIT ? OFFSET ?
-      `).all(contact_name, lim, off)
+        WHERE contact_name = ? AND user_id = ? ORDER BY timestamp ASC LIMIT ? OFFSET ?
+      `).all(contact_name, USER_ID, lim, off)
     } else {
       const mins = minutes ?? 30
-      total = (db.prepare(`SELECT COUNT(*) as n FROM messages WHERE timestamp > datetime('now', '-' || ? || ' minutes')`).get(mins) as any).n
+      total = (db.prepare(`SELECT COUNT(*) as n FROM messages WHERE timestamp > datetime('now', '-' || ? || ' minutes') AND user_id = ?`).get(mins, USER_ID) as any).n
       rows = db.prepare(`
         SELECT contact_name, direction, content, timestamp FROM messages
-        WHERE timestamp > datetime('now', '-' || ? || ' minutes')
+        WHERE timestamp > datetime('now', '-' || ? || ' minutes') AND user_id = ?
         ORDER BY timestamp ASC LIMIT ? OFFSET ?
-      `).all(mins, lim, off)
+      `).all(mins, USER_ID, lim, off)
     }
 
     if (rows.length === 0) {
@@ -200,7 +214,7 @@ server.tool(
     limit: z.number().optional().describe('返回条数，默认30条'),
   },
   async ({ keyword, contact_name, limit }) => {
-    const results = searchMessages(keyword, contact_name, limit ?? 30)
+    const results = searchMessages(USER_ID, keyword, contact_name, limit ?? 30)
     if (results.length === 0) {
       return { content: [{ type: 'text', text: `未找到包含"${keyword}"的消息` }] }
     }
@@ -224,7 +238,7 @@ server.tool(
   },
   async ({ contact_name, subject, body }) => {
     if (!subject) subject = body.slice(0, 30).replace(/\n/g, ' ') + (body.length > 30 ? '...' : '')
-    const result = await sendEmail({ contact_name, subject, body })
+    const result = await sendEmail(USER_ID, { contact_name, subject, body })
     return {
       content: [
         {
@@ -245,7 +259,7 @@ server.tool(
     content: z.string().describe('消息内容'),
   },
   async ({ contact_name, content }) => {
-    const result = await sendFeishuMessage({ contact_name, content })
+    const result = await sendFeishuMessage(USER_ID, { contact_name, content })
     return {
       content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
     }
@@ -261,7 +275,7 @@ server.tool(
     limit: z.number().optional().describe('返回条数，默认50'),
   },
   async ({ minutes, limit }) => {
-    const msgs = getNewMessages(minutes ?? 5, limit ?? 50)
+    const msgs = getNewMessages(USER_ID, minutes ?? 5, limit ?? 50)
     if (msgs.length === 0) {
       return { content: [{ type: 'text', text: '没有新消息' }] }
     }
@@ -272,7 +286,8 @@ server.tool(
         `  ${h.timestamp.slice(0, 16)} [${h.direction === 'sent' ? '我' : m.contact_name}] ${h.content}`
       ).join('\n')
       const tags = [m.is_at_me ? '⚡@我' : '', m.is_read ? '✓已读' : '🆕'].filter(Boolean).join(' ')
-      return `━━━ ID:${m.id} | ${m.contact_name} | ${m.created_at.slice(0, 16)} ${tags} ━━━\n新消息：${m.incoming_content}\n最近记录：\n${history || '  （无）'}`
+      const suggestionText = m.suggestion ? `\n回复建议：\n${m.suggestion}` : ''
+      return `━━━ ID:${m.id} | ${m.contact_name} | ${m.created_at.slice(0, 16)} ${tags} ━━━\n新消息：${m.incoming_content}\n最近记录：\n${history || '  （无）'}${suggestionText}`
     }).join('\n\n')
     return { content: [{ type: 'text', text: `共 ${msgs.length} 条消息（${unread}条未读，${atMe}条@我）：\n\n${text}` }] }
   }
@@ -286,7 +301,7 @@ server.tool(
     ids: z.array(z.number()).describe('要标记已读的消息 ID 列表'),
   },
   async ({ ids }) => {
-    markMessagesRead(ids)
+    markMessagesRead(USER_ID, ids)
     return { content: [{ type: 'text', text: `已标记 ${ids.length} 条消息为已读` }] }
   }
 )
@@ -300,7 +315,7 @@ server.tool(
     limit: z.number().optional().describe('返回数量，默认20，最大200'),
   },
   async ({ topic, limit }) => {
-    const tasks = await getApprovalTasks(topic ?? 1, limit ?? 20)
+    const tasks = await getApprovalTasks(USER_ID, topic ?? 1, limit ?? 20)
     if (tasks.length === 0) {
       return { content: [{ type: 'text', text: '没有审批任务' }] }
     }
@@ -319,48 +334,27 @@ server.tool(
     instance_code: z.string().describe('审批实例 code，从 get_approvals 返回的列表中获取'),
   },
   async ({ instance_code }) => {
-    const detail = await getApprovalDetail(instance_code)
+    const detail = await getApprovalDetail(USER_ID, instance_code)
     return {
       content: [{ type: 'text', text: JSON.stringify(detail, null, 2) }],
     }
   }
 )
 
-// ── sync-daemon 守护 ─────────────────────────────────
-import { execSync, spawn } from 'child_process'
-import path from 'path'
-
-function ensureSyncDaemon() {
-  try {
-    const out = execSync('pgrep -f "sync-daemon"', { encoding: 'utf-8' }).trim()
-    if (out) {
-      console.error('[social-proxy] sync-daemon 已在运行 (pid: ' + out.split('\n')[0] + ')')
-      return
-    }
-  } catch {
-    // pgrep 没找到进程，返回非0
-  }
-
-  console.error('[social-proxy] sync-daemon 未运行，正在拉起...')
-  const projectRoot = path.resolve(__dirname, '..', '..')
-  const child = spawn('npx', ['ts-node', path.join(projectRoot, 'sync-daemon.ts')], {
-    cwd: projectRoot,
-    detached: true,
-    stdio: 'ignore',
-    env: {
-      ...process.env,
-      DB_PATH: process.env.DB_PATH || path.join(projectRoot, 'social-proxy.db'),
-    },
-  })
-  child.unref()
-  console.error(`[social-proxy] sync-daemon 已拉起 (pid: ${child.pid})`)
-}
-
 // ── 启动 ──────────────────────────────────────────────
-import { quickSync } from './feishu/sync'
+import { quickSync, auditSync } from './feishu/sync'
 import { quickDocSync } from './feishu/docs'
+import { generateReplySuggestions } from './sync/reply-suggest'
 
 const SYNC_INTERVAL = 15000 // 15秒
+
+function notifyNewMessages(count: number) {
+  if (process.platform !== 'darwin' || count <= 0) return
+  try {
+    const { execSync } = require('child_process')
+    execSync(`osascript -e 'display notification "收到 ${count} 条新飞书消息" with title "Social Proxy" sound name "Ping"'`)
+  } catch {}
+}
 
 async function runSync() {
   try {
@@ -370,10 +364,18 @@ async function runSync() {
     ])
     const r = msgResult as any
     const d = docResult as any
-    if (r.imported > 0) console.error(`[同步] ${r.imported} 条新消息`)
+    if (r.imported > 0) {
+      console.error(`[同步] ${r.imported} 条新消息`)
+      notifyNewMessages(r.imported)
+    }
     if (d.updated > 0 || d.added > 0) console.error(`[同步] 文档: ${d.added} 新增, ${d.updated} 更新`)
     if (r._err) console.error(`[同步] 消息出错: ${r._err}`)
     if (d._err) console.error(`[同步] 文档出错: ${d._err}`)
+
+    // 为未处理的消息生成 AI 回复建议
+    generateReplySuggestions().catch(e =>
+      console.error(`[回复建议] 生成失败: ${e.message}`)
+    )
   } catch (e: any) {
     console.error(`[同步] 出错: ${e.message}`)
   }
@@ -383,15 +385,18 @@ async function main() {
   const transport = new StdioServerTransport()
   await server.connect(transport)
 
-  // 确保 sync-daemon 在后台运行
-  ensureSyncDaemon()
-
   // 启动时立即同步一次
   runSync()
   // 之后每15秒同步
   setInterval(runSync, SYNC_INTERVAL)
 
-  console.error(`[social-proxy] MCP Server 已启动，每${SYNC_INTERVAL / 1000}s自动同步消息+文档`)
+  // 每10分钟审计一次消息完整性
+  const AUDIT_INTERVAL = 10 * 60 * 1000
+  setInterval(() => {
+    auditSync().catch(e => console.error('[audit] error:', e.message))
+  }, AUDIT_INTERVAL)
+
+  console.error(`[social-proxy] MCP Server 已启动，每${SYNC_INTERVAL / 1000}s同步，每10min审计`)
 }
 
 main().catch((err) => {

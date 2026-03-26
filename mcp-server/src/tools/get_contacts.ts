@@ -9,11 +9,14 @@ export interface ContactRow {
   days_since_last_contact: number
 }
 
-export function getContacts(search?: string, limit = 50): ContactRow[] {
+export function getContacts(userId?: string, search?: string, limit = 50): ContactRow[] {
   const db = getDb()
+  const uid = userId || process.env.DEFAULT_USER_ID || 'local'
 
-  const where = search ? `WHERE name LIKE '%' || ? || '%'` : ''
-  const params: any[] = search ? [search] : []
+  const where = search
+    ? `WHERE user_id = ? AND name LIKE '%' || ? || '%'`
+    : `WHERE user_id = ?`
+  const params: any[] = search ? [uid, search] : [uid]
 
   const rows = db.prepare(`
     SELECT

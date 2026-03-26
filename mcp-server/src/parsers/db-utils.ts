@@ -1,6 +1,12 @@
 // 共用数据库写入工具 — 供各平台导入脚本复用
 import Database from 'better-sqlite3'
 
+/** 将 Date 对象转为本地时间字符串 "YYYY-MM-DD HH:mm:ss" */
+export function toLocalTime(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g
 
 export interface ParsedMessage {
@@ -73,17 +79,17 @@ export function normalizeTimestamp(raw: string): string {
 
   // Unix 时间戳（毫秒）
   if (/^\d{13}$/.test(raw)) {
-    return new Date(parseInt(raw, 10)).toISOString().replace('T', ' ').slice(0, 19)
+    return toLocalTime(new Date(parseInt(raw, 10)))
   }
 
   // Unix 时间戳（秒）
   if (/^\d{10}$/.test(raw)) {
-    return new Date(parseInt(raw, 10) * 1000).toISOString().replace('T', ' ').slice(0, 19)
+    return toLocalTime(new Date(parseInt(raw, 10) * 1000))
   }
 
   // ISO 格式 fallback
   try {
-    return new Date(raw).toISOString().replace('T', ' ').slice(0, 19)
+    return toLocalTime(new Date(raw))
   } catch {
     return raw
   }

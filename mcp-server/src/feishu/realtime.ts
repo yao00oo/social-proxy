@@ -46,7 +46,7 @@ async function generateReplySuggestion(
   recentHistory: { direction: string; content: string }[],
   incomingMessage: string
 ): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY
+  const apiKey = process.env.OPENROUTER_API_KEY || getSetting('openrouter_api_key')
   if (!apiKey) return ''
 
   const client = new OpenAI({ baseURL: 'https://openrouter.ai/api/v1', apiKey })
@@ -135,12 +135,28 @@ export async function pollAndSync(): Promise<{ synced: number; suggestions: numb
 
     const content = parseFeishuContent(msg.message_type, msg.content)
     const createTimeMs = parseInt(msg.create_time || String(event.ts))
-    const ts = new Date(createTimeMs).toISOString().replace('T', ' ').slice(0, 19)
+    const _d = new Date(createTimeMs)
+    const _p = (n: number) => String(n).padStart(2, '0')
+    const ts = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`
 
-    // Look up contact name from sync state
-    const stateRow = db.prepare(
+    // Look up contact name from sync state; if p2p and not yet tracked, register for history backfill
+    let stateRow = db.prepare(
       `SELECT chat_name FROM feishu_sync_state WHERE chat_id = ?`
     ).get(chatId) as any
+
+    if (!stateRow && chatType === 'p2p') {
+      // 发现新的私聊，查发送者姓名
+      const senderName = db.prepare(`SELECT name FROM feishu_users WHERE open_id = ?`).get(senderOpenId) as any
+      const chatName = senderName?.name || senderOpenId
+      // 注册到 sync_state，last_sync_ts='0' 让 quickSync 回填全部历史
+      db.prepare(`
+        INSERT OR IGNORE INTO feishu_sync_state(chat_id, chat_name, chat_type, last_sync_ts)
+        VALUES (?, ?, 'p2p', '0')
+      `).run(chatId, chatName)
+      stateRow = { chat_name: chatName }
+      console.error(`[实时同步] 发现新私聊: ${chatName} (${chatId})，将自动回填历史`)
+    }
+
     const contactName = stateRow?.chat_name || chatId
 
     const direction = isSelf ? 'sent' : 'received'

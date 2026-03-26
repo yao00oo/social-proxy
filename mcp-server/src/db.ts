@@ -117,6 +117,15 @@ function migrate(db: Database.Database) {
   if (!contactCols.map(c => c.name).includes('phone')) {
     db.exec(`ALTER TABLE contacts ADD COLUMN phone TEXT`)
   }
+
+  // 给 settings/messages/contacts/reply_suggestions 表加 user_id 列（多租户兼容）
+  const DEFAULT_UID = process.env.DEFAULT_USER_ID || 'local'
+  for (const table of ['settings', 'messages', 'contacts', 'reply_suggestions', 'feishu_users']) {
+    const tCols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+    if (!tCols.map(c => c.name).includes('user_id')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN user_id TEXT DEFAULT '${DEFAULT_UID}'`)
+    }
+  }
 }
 
 export function getDbPath(): string {

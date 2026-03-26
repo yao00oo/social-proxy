@@ -117,7 +117,8 @@ async function syncFolder(
       const env = msg.envelope
       if (!env || !env.date) continue
 
-      const ts = new Date(env.date).toISOString().replace('T', ' ').slice(0, 19)
+      const _d = new Date(env.date), _p = (n: number) => String(n).padStart(2, '0')
+      const ts = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`
       const subject = env.subject || '(无主题)'
       const sourceId = `email:${folder}:${msg.uid}`
 

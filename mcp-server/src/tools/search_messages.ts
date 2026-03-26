@@ -8,24 +8,25 @@ export interface SearchResult {
   timestamp: string
 }
 
-export function searchMessages(keyword: string, contactName?: string, limit = 30): SearchResult[] {
+export function searchMessages(userId?: string, keyword?: string, contactName?: string, limit = 30): SearchResult[] {
   const db = getDb()
+  const uid = userId || process.env.DEFAULT_USER_ID || 'local'
 
   if (contactName) {
     return db.prepare(`
       SELECT contact_name, direction, content, timestamp
       FROM messages
-      WHERE contact_name = ? AND content LIKE ?
+      WHERE contact_name = ? AND content LIKE ? AND user_id = ?
       ORDER BY timestamp DESC
       LIMIT ?
-    `).all(contactName, `%${keyword}%`, limit) as SearchResult[]
+    `).all(contactName, `%${keyword}%`, uid, limit) as SearchResult[]
   }
 
   return db.prepare(`
     SELECT contact_name, direction, content, timestamp
     FROM messages
-    WHERE content LIKE ?
+    WHERE content LIKE ? AND user_id = ?
     ORDER BY timestamp DESC
     LIMIT ?
-  `).all(`%${keyword}%`, limit) as SearchResult[]
+  `).all(`%${keyword}%`, uid, limit) as SearchResult[]
 }

@@ -19,14 +19,15 @@ interface SendResult {
   }
 }
 
-export async function sendEmail(args: SendEmailArgs): Promise<SendResult> {
+export async function sendEmail(userId: string, args: SendEmailArgs): Promise<SendResult> {
+  const uid = userId || process.env.DEFAULT_USER_ID || 'local'
   const { contact_name, subject, body } = args
   const db = getDb()
 
   // 1. 查联系人邮箱
   const contact = db.prepare(`
-    SELECT name, email FROM contacts WHERE name = ?
-  `).get(contact_name) as { name: string; email: string | null } | undefined
+    SELECT name, email FROM contacts WHERE name = ? AND user_id = ?
+  `).get(contact_name, uid) as { name: string; email: string | null } | undefined
 
   if (!contact) {
     return {
@@ -45,7 +46,7 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendResult> {
   }
 
   // 2. 读取 SMTP 配置
-  const settings = db.prepare(`SELECT key, value FROM settings`).all() as { key: string; value: string }[]
+  const settings = db.prepare(`SELECT key, value FROM settings WHERE user_id = ?`).all(uid) as { key: string; value: string }[]
   const cfg: Record<string, string> = {}
   for (const { key, value } of settings) cfg[key] = value
 
@@ -94,17 +95,18 @@ export async function sendEmail(args: SendEmailArgs): Promise<SendResult> {
   })
 
   // 5. 写入发送记录，更新 last_contact_at
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+  const _d = new Date(), _p = (n: number) => String(n).padStart(2, '0')
+  const now = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`
 
   db.prepare(`
-    INSERT INTO messages(contact_name, direction, content, timestamp)
-    VALUES (?, 'sent', ?, ?)
-  `).run(contact_name, `[邮件] 主题: ${subject}\n\n${body}`, now)
+    INSERT INTO messages(contact_name, direction, content, timestamp, user_id)
+    VALUES (?, 'sent', ?, ?, ?)
+  `).run(contact_name, `[邮件] 主题: ${subject}\n\n${body}`, now, uid)
 
   db.prepare(`
     UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1
-    WHERE name = ?
-  `).run(now, contact_name)
+    WHERE name = ? AND user_id = ?
+  `).run(now, contact_name, uid)
 
   return {
     success: true,

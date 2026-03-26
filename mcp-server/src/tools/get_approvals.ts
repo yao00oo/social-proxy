@@ -38,15 +38,17 @@ export interface ApprovalTask {
 
 // 查询用户的审批任务
 export async function getApprovalTasks(
+  userId: string,
   topic: number = 1, // 1=待审批 2=已审批 3=我发起的
   limit: number = 20,
 ): Promise<ApprovalTask[]> {
-  const token = await ensureValidToken()
-  const userId = getSetting('feishu_user_id')
-  if (!userId) throw new Error('未设置 feishu_user_id，请先完成飞书授权')
+  const uid = userId || process.env.DEFAULT_USER_ID || 'local'
+  const token = await ensureValidToken(uid)
+  const feishuUserId = getSetting('feishu_user_id', uid)
+  if (!feishuUserId) throw new Error('未设置 feishu_user_id，请先完成飞书授权')
 
   const params: Record<string, string> = {
-    user_id: userId,
+    user_id: feishuUserId,
     user_id_type: 'open_id',
     topic: topic.toString(),
     page_size: Math.min(limit, 200).toString(),
@@ -69,9 +71,10 @@ export async function getApprovalTasks(
 }
 
 // 获取审批实例详情（表单数据 + 附件）— 需要 tenant_access_token
-export async function getApprovalDetail(instanceCode: string): Promise<any> {
-  const appId = getSetting('feishu_app_id')
-  const appSecret = getSetting('feishu_app_secret')
+export async function getApprovalDetail(userId: string, instanceCode: string): Promise<any> {
+  const uid = userId || process.env.DEFAULT_USER_ID || 'local'
+  const appId = getSetting('feishu_app_id', uid)
+  const appSecret = getSetting('feishu_app_secret', uid)
   const token = await getAppAccessToken(appId, appSecret)
 
   const res = await get(`/approval/v4/instances/${instanceCode}`, token)

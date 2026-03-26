@@ -19,14 +19,15 @@ interface SendFeishuResult {
   }
 }
 
-async function getAppToken(): Promise<string> {
-  const appId = getSetting('feishu_app_id')
-  const appSecret = getSetting('feishu_app_secret')
+async function getAppToken(uid: string): Promise<string> {
+  const appId = getSetting('feishu_app_id', uid)
+  const appSecret = getSetting('feishu_app_secret', uid)
   if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret，请先在配置页面填写')
   return getAppAccessToken(appId, appSecret)
 }
 
-export async function sendFeishuMessage(args: SendFeishuArgs): Promise<SendFeishuResult> {
+export async function sendFeishuMessage(userId: string, args: SendFeishuArgs): Promise<SendFeishuResult> {
+  const uid = userId || process.env.DEFAULT_USER_ID || 'local'
   const { contact_name, content } = args
   const db = getDb()
 
@@ -35,23 +36,23 @@ export async function sendFeishuMessage(args: SendFeishuArgs): Promise<SendFeish
   let receiveIdType: 'open_id' | 'chat_id' = 'open_id'
 
   const userRow = db.prepare(`
-    SELECT open_id FROM feishu_users WHERE name = ? LIMIT 1
-  `).get(contact_name) as { open_id: string } | undefined
+    SELECT open_id FROM feishu_users WHERE name = ? AND user_id = ? LIMIT 1
+  `).get(contact_name, uid) as { open_id: string } | undefined
 
   if (userRow) {
     receiveId = userRow.open_id
   } else {
     const contactRow = db.prepare(`
-      SELECT feishu_open_id FROM contacts WHERE name = ? AND feishu_open_id IS NOT NULL
-    `).get(contact_name) as { feishu_open_id: string } | undefined
+      SELECT feishu_open_id FROM contacts WHERE name = ? AND feishu_open_id IS NOT NULL AND user_id = ?
+    `).get(contact_name, uid) as { feishu_open_id: string } | undefined
     receiveId = contactRow?.feishu_open_id ?? null
   }
 
   if (!receiveId) {
     // fallback：用 chat_id
     const stateRow = db.prepare(`
-      SELECT chat_id FROM feishu_sync_state WHERE chat_name = ? LIMIT 1
-    `).get(contact_name) as { chat_id: string } | undefined
+      SELECT chat_id FROM feishu_sync_state WHERE chat_name = ? AND user_id = ? LIMIT 1
+    `).get(contact_name, uid) as { chat_id: string } | undefined
 
     if (!stateRow) {
       return {
@@ -64,7 +65,7 @@ export async function sendFeishuMessage(args: SendFeishuArgs): Promise<SendFeish
     receiveIdType = 'chat_id'
   }
 
-  const permissionMode = getSetting('permission_mode') || 'suggest'
+  const permissionMode = getSetting('permission_mode', uid) || 'suggest'
 
   // 2. suggest 模式：返回草稿
   if (permissionMode === 'suggest') {
@@ -77,18 +78,19 @@ export async function sendFeishuMessage(args: SendFeishuArgs): Promise<SendFeish
   }
 
   // 3. auto 模式：用 app_access_token 发（飞书要求，只能机器人发）
-  const appToken = await getAppToken()
+  const appToken = await getAppToken(uid)
   const { message_id } = await sendMessage(appToken, receiveId, content, receiveIdType)
 
   // 4. 写入发送记录
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19)
+  const _d = new Date(), _p = (n: number) => String(n).padStart(2, '0')
+  const now = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`
   db.prepare(`
-    INSERT INTO messages(contact_name, direction, content, timestamp, source_id)
-    VALUES (?, 'sent', ?, ?, ?)
-  `).run(contact_name, content, now, message_id)
+    INSERT INTO messages(contact_name, direction, content, timestamp, source_id, user_id)
+    VALUES (?, 'sent', ?, ?, ?, ?)
+  `).run(contact_name, content, now, message_id, uid)
   db.prepare(`
-    UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?
-  `).run(now, contact_name)
+    UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ? AND user_id = ?
+  `).run(now, contact_name, uid)
 
   return {
     success: true,
