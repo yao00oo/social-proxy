@@ -22,3 +22,4 @@ config-ui/.next/
 nohup.out
 .vercel
 .env.vercel
+images/
