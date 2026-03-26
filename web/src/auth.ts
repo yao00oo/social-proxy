@@ -19,6 +19,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: '/login',
   },
   callbacks: {
+    authorized({ auth, request }) {
+      const isLoggedIn = !!auth?.user
+      const isLoginPage = request.nextUrl.pathname.startsWith('/login')
+      const isAuthApi = request.nextUrl.pathname.startsWith('/api/auth')
+      if (isLoginPage || isAuthApi) return true
+      if (!isLoggedIn) return false // triggers redirect to signIn page
+      return true
+    },
     session({ session, user }) {
       if (session.user) {
         session.user.id = user.id
