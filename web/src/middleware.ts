@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export function middleware(request: NextRequest) {
-  const token = request.cookies.get('authjs.session-token') || request.cookies.get('__Secure-authjs.session-token')
+  // NextAuth v4 cookie names
+  const token = request.cookies.get('next-auth.session-token') || request.cookies.get('__Secure-next-auth.session-token')
   const isLoginPage = request.nextUrl.pathname.startsWith('/login')
   const isAuthApi = request.nextUrl.pathname.startsWith('/api/auth')
   const isHealthApi = request.nextUrl.pathname.startsWith('/api/health')
