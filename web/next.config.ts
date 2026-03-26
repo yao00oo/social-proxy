@@ -1,9 +1,9 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  // better-sqlite3 是原生 Node.js 模块，需要在服务端运行
-  // 防止被打包进客户端 bundle
   serverExternalPackages: ['better-sqlite3'],
+  // 让 Next.js 编译 mcp-server 下的文件，解决跨目录引用时 node_modules 找不到的问题
+  transpilePackages: ['../mcp-server'],
 }
 
 export default nextConfig
