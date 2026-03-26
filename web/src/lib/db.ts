@@ -24,7 +24,8 @@ export function getDrizzleDb() {
 export async function query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
   let i = 0
   const pgSql = sql.replace(/\?/g, () => `$${++i}`)
-  return await (getSql() as any)(pgSql, params) as T[]
+  const fn = getSql()
+  return await fn.query(pgSql, params) as T[]
 }
 
 export async function queryOne<T = any>(sql: string, params: any[] = []): Promise<T | null> {
