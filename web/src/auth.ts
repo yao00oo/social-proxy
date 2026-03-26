@@ -3,7 +3,7 @@ import Google from 'next-auth/providers/google'
 import { DrizzleAdapter } from '@auth/drizzle-adapter'
 import { drizzle } from 'drizzle-orm/neon-http'
 import { neon } from '@neondatabase/serverless'
-import * as schema from '../../mcp-server/src/schema'
+import * as schema from './lib/schema'
 
 const db = drizzle(neon(process.env.DATABASE_URL!), { schema })
 

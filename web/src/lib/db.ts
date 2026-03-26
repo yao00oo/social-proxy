@@ -1,7 +1,7 @@
 // 数据库层 — 线上版本用 Neon PostgreSQL
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
-import * as schema from '../../../mcp-server/src/schema'
+import * as schema from './schema'
 
 let _sql: ReturnType<typeof neon> | null = null
 let _drizzleDb: ReturnType<typeof drizzle> | null = null
