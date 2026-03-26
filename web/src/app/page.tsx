@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
 // Custom hook instead of useChat — AI SDK v6 transport API too unstable
 
 // ---------- Types ----------
@@ -79,6 +81,13 @@ const AI_ASSISTANT = '__xiaolin__'
 
 // ---------- Main Page ----------
 export default function HomePage() {
+  const { data: session, status } = useSession()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (status === 'unauthenticated') router.push('/login')
+  }, [status, router])
+
   const [contacts, setContacts] = useState<Contact[]>([])
   const [selectedName, setSelectedName] = useState<string | null>(AI_ASSISTANT) // default to AI
   const [search, setSearch] = useState('')
@@ -259,21 +268,24 @@ export default function HomePage() {
 
   // ---------- Load contacts ----------
   useEffect(() => {
+    if (status !== 'authenticated') return
     fetch('/api/contacts?limit=100').then(r => r.json()).then(data => setContacts(data.contacts || [])).catch(console.error)
-  }, [])
+  }, [status])
 
   // ---------- Load new messages ----------
   useEffect(() => {
+    if (status !== 'authenticated') return
     const load = () => fetch('/api/messages/new?minutes=1440&limit=50').then(r => r.json()).then(data => setNewMessages(data.messages || [])).catch(console.error)
     load()
     const iv = setInterval(load, 30000)
     return () => clearInterval(iv)
-  }, [])
+  }, [status])
 
   // ---------- Load stats ----------
   useEffect(() => {
+    if (status !== 'authenticated') return
     fetch('/api/stats').then(r => r.json()).then(setStats).catch(console.error)
-  }, [])
+  }, [status])
 
   // ---------- Load real contact history ----------
   useEffect(() => {
@@ -348,6 +360,10 @@ export default function HomePage() {
   const healthPct = selectedContact ? Math.max(0, Math.min(100, 100 - selectedContact.days_since_last_contact)) : 0
   const healthColor = healthPct >= 70 ? 'text-primary' : healthPct >= 40 ? 'text-accent-orange' : 'text-error'
   const healthBarColor = healthPct >= 70 ? 'bg-primary' : healthPct >= 40 ? 'bg-accent-orange' : 'bg-error'
+
+  if (status === 'loading') {
+    return <div className="flex h-screen items-center justify-center bg-surface"><span className="text-outline">加载中...</span></div>
+  }
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-surface">
