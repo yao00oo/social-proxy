@@ -1,7 +1,7 @@
 // POST /api/send/email — 发送邮件（移植自 MCP send_email）
 import { NextRequest, NextResponse } from 'next/server'
 import nodemailer from 'nodemailer'
-import { getDb } from '@/lib/db'
+import { queryOne, exec } from '@/lib/db'
 import { getSetting } from '@/lib/feishu'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
@@ -15,10 +15,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '缺少 contact_name 和 body' }, { status: 400 })
   }
 
-  const db = getDb()
-  const contact = db.prepare(
-    'SELECT name, email FROM contacts WHERE name = ?'
-  ).get(contact_name) as any
+  const contact = await queryOne<{ name: string; email: string }>(
+    'SELECT name, email FROM contacts WHERE name = ?', [contact_name]
+  )
 
   if (!contact) {
     return NextResponse.json({ success: false, message: `联系人"${contact_name}"不存在` }, { status: 404 })
@@ -30,7 +29,7 @@ export async function POST(req: NextRequest) {
   const emailSubject = subject || body.slice(0, 30).replace(/\n/g, ' ') + (body.length > 30 ? '...' : '')
 
   // Check permission mode
-  const mode = getSetting('permission_mode') || 'suggest'
+  const mode = await getSetting('permission_mode') || 'suggest'
   if (mode === 'suggest') {
     return NextResponse.json({
       success: true,
@@ -41,21 +40,23 @@ export async function POST(req: NextRequest) {
   }
 
   // Send via SMTP
-  const smtpHost = getSetting('smtp_host')
-  const smtpUser = getSetting('smtp_user')
+  const smtpHost = await getSetting('smtp_host')
+  const smtpUser = await getSetting('smtp_user')
   if (!smtpHost || !smtpUser) {
     return NextResponse.json({ success: false, message: 'SMTP 未配置' }, { status: 500 })
   }
 
   try {
+    const smtpPort = await getSetting('smtp_port')
+    const smtpPass = await getSetting('smtp_pass')
     const transporter = nodemailer.createTransport({
       host: smtpHost,
-      port: parseInt(getSetting('smtp_port') || '587', 10),
-      secure: getSetting('smtp_port') === '465',
-      auth: { user: smtpUser, pass: getSetting('smtp_pass') },
+      port: parseInt(smtpPort || '587', 10),
+      secure: smtpPort === '465',
+      auth: { user: smtpUser, pass: smtpPass },
     })
 
-    const fromName = getSetting('smtp_from_name')
+    const fromName = await getSetting('smtp_from_name')
     await transporter.sendMail({
       from: fromName ? `"${fromName}" <${smtpUser}>` : smtpUser,
       to: contact.email,
@@ -65,12 +66,14 @@ export async function POST(req: NextRequest) {
 
     // Record
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    db.prepare(
-      'INSERT INTO messages(contact_name, direction, content, timestamp) VALUES (?, ?, ?, ?)'
-    ).run(contact_name, 'sent', `[邮件] 主题: ${emailSubject}\n\n${body}`, now)
-    db.prepare(
-      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?'
-    ).run(now, contact_name)
+    await exec(
+      'INSERT INTO messages(contact_name, direction, content, timestamp) VALUES (?, ?, ?, ?)',
+      [contact_name, 'sent', `[邮件] 主题: ${emailSubject}\n\n${body}`, now]
+    )
+    await exec(
+      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?',
+      [now, contact_name]
+    )
 
     return NextResponse.json({
       success: true,

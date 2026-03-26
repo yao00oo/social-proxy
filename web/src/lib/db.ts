@@ -1,34 +1,40 @@
-// 数据库层 — 多租户模式用 PG（Drizzle），本地模式 fallback SQLite
+// 数据库层 — 线上版本用 Neon PostgreSQL
 import { neon } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-http'
 import * as schema from '../../mcp-server/src/schema'
 
-// ── PostgreSQL (Drizzle) ──
-let _pgDb: ReturnType<typeof drizzle> | null = null
+let _sql: ReturnType<typeof neon> | null = null
+let _drizzleDb: ReturnType<typeof drizzle> | null = null
 
-export function getPgDb() {
-  if (_pgDb) return _pgDb
+function getSql() {
+  if (_sql) return _sql
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL not set')
-  _pgDb = drizzle(neon(process.env.DATABASE_URL), { schema })
-  return _pgDb
+  _sql = neon(process.env.DATABASE_URL)
+  return _sql
 }
 
-// ── SQLite (legacy, 本地开发) ──
-import Database from 'better-sqlite3'
-import path from 'path'
-
-const DB_PATH = process.env.DB_PATH || path.resolve('/Users/yaoyao/Project/social-proxy/social-proxy.db')
-let _sqliteDb: Database.Database | null = null
-
-export function getDb(): Database.Database {
-  if (_sqliteDb) return _sqliteDb
-  _sqliteDb = new Database(DB_PATH, { readonly: false })
-  _sqliteDb.pragma('journal_mode = WAL')
-  return _sqliteDb
+// Drizzle ORM instance (for NextAuth adapter etc.)
+export function getDrizzleDb() {
+  if (_drizzleDb) return _drizzleDb
+  _drizzleDb = drizzle(getSql(), { schema })
+  return _drizzleDb
 }
 
-// ── 判断当前模式 ──
-export const isPgMode = !!process.env.DATABASE_URL
+// Raw SQL query helper — converts ? to $1,$2,... for PostgreSQL
+export async function query<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+  let i = 0
+  const pgSql = sql.replace(/\?/g, () => `$${++i}`)
+  return await getSql()(pgSql, params) as T[]
+}
+
+export async function queryOne<T = any>(sql: string, params: any[] = []): Promise<T | null> {
+  const rows = await query<T>(sql, params)
+  return rows[0] || null
+}
+
+export async function exec(sql: string, params: any[] = []): Promise<void> {
+  await query(sql, params)
+}
 
 // ── Types ──
 export interface Contact {

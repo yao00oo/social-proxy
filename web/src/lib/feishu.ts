@@ -1,6 +1,6 @@
 // 飞书 API 封装 — 移植自 social-proxy MCP server
 import https from 'https'
-import { getDb } from './db'
+import { queryOne } from './db'
 
 const BASE = 'https://open.feishu.cn/open-apis'
 
@@ -30,15 +30,15 @@ function post(path: string, body: object, headers: Record<string, string> = {}):
 }
 
 // Settings helpers
-export function getSetting(key: string): string {
-  const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as any
+export async function getSetting(key: string): Promise<string> {
+  const row = await queryOne<{ value: string }>('SELECT value FROM settings WHERE key = ?', [key])
   return row?.value || ''
 }
 
 // Get app access token
 export async function getAppAccessToken(): Promise<string> {
-  const appId = getSetting('feishu_app_id')
-  const appSecret = getSetting('feishu_app_secret')
+  const appId = await getSetting('feishu_app_id')
+  const appSecret = await getSetting('feishu_app_secret')
   if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret')
   const res = await post('/auth/v3/app_access_token/internal', { app_id: appId, app_secret: appSecret })
   if (res.code !== 0) throw new Error(`getAppAccessToken: ${res.msg}`)

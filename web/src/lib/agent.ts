@@ -2,7 +2,7 @@
 import { streamText, stepCountIs } from 'ai'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { z } from 'zod'
-import { getDb } from './db'
+import { query, queryOne, exec } from './db'
 // feishu imports removed — settings read inline with userId filter
 
 const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY || '' })
@@ -52,15 +52,16 @@ const SYSTEM_PROMPT = `你是"小林"，用户的私人社交助理。
 当前时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
 
 // Fuzzy contact name resolver
-function resolveContactName(db: any, name: string, userId: string): string {
-  const exact = db.prepare('SELECT name FROM contacts WHERE name = ? AND user_id = ?').get(name, userId) as any
+async function resolveContactName(name: string, userId: string): Promise<string> {
+  const exact = await queryOne<{ name: string }>('SELECT name FROM contacts WHERE name = ? AND user_id = ?', [name, userId])
   if (exact) return exact.name
   // Prefer "(私聊)" suffix, then shortest name
-  const candidates = db.prepare(
+  const candidates = await query<{ name: string }>(
     `SELECT name FROM contacts WHERE name LIKE '%' || ? || '%' AND user_id = ? ORDER BY
       CASE WHEN name LIKE '% (私聊)' THEN 0 ELSE 1 END,
-      length(name) ASC LIMIT 1`
-  ).all(name, userId) as any[]
+      length(name) ASC LIMIT 1`,
+    [name, userId]
+  )
   return candidates[0]?.name || name
 }
 
@@ -74,20 +75,20 @@ function createTools(userId: string): Record<string, any> {
       limit: z.number().optional().describe('返回数量，默认20'),
     }),
     execute: async ({ search, limit }: { search?: string; limit?: number }) => {
-      const db = getDb()
       const lim = Math.min(limit ?? 20, 100)
       const where = search
         ? `WHERE user_id = ? AND name LIKE '%' || ? || '%'`
         : `WHERE user_id = ?`
       const params: any[] = search ? [userId, search] : [userId]
-      const rows = db.prepare(`
+      const rows = await query(`
         SELECT name, email, phone, last_contact_at, message_count,
           CASE WHEN last_contact_at IS NULL THEN 9999
-            ELSE CAST((julianday('now') - julianday(last_contact_at)) AS INTEGER)
+            ELSE CAST(EXTRACT(EPOCH FROM NOW() - last_contact_at::timestamp) / 86400 AS INTEGER)
           END AS days_since
         FROM contacts ${where} ORDER BY last_contact_at DESC LIMIT ?
-      `).all(...params, lim)
-      return { total: (db.prepare('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?').get(userId) as any).n, contacts: rows }
+      `, [...params, lim])
+      const countRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?', [userId])
+      return { total: countRow?.n ?? 0, contacts: rows }
     },
   },
 
@@ -100,32 +101,33 @@ function createTools(userId: string): Record<string, any> {
     execute: async (rawArgs: any) => {
       const contact_name = rawArgs.contact_name || rawArgs.contact || rawArgs.name || ''
       const limit = rawArgs.limit
-      const db = getDb()
       const lim = limit ?? 30
       if (!contact_name) return { error: '请提供联系人姓名', total: 0, messages: [] }
 
       // 先精确匹配，再模糊匹配（优先私聊）
       let actualName = contact_name
-      const exact = db.prepare('SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?').get(contact_name, userId) as any
-      if (exact.n === 0) {
+      const exact = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?', [contact_name, userId])
+      if (exact?.n === 0) {
         // 模糊搜索，优先"xxx (私聊)"，其次短名的群聊
-        const candidates = db.prepare(
+        const candidates = await query<{ name: string; message_count: number }>(
           `SELECT name, message_count FROM contacts WHERE name LIKE '%' || ? || '%' AND user_id = ? ORDER BY
             CASE WHEN name LIKE '% (私聊)' THEN 0 ELSE 1 END,
-            length(name) ASC LIMIT 5`
-        ).all(contact_name, userId) as any[]
+            length(name) ASC LIMIT 5`,
+          [contact_name, userId]
+        )
         if (candidates.length > 0) {
           actualName = candidates[0].name
         }
       }
 
-      const total = (db.prepare('SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?').get(actualName, userId) as any).n
-      const messages = db.prepare(`
+      const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?', [actualName, userId])
+      const total = totalRow?.n ?? 0
+      const messages = await query(`
         SELECT direction, content, timestamp FROM (
           SELECT direction, content, timestamp FROM messages WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT ?
-        ) ORDER BY timestamp ASC
-      `).all(actualName, userId, lim)
-      const summaryRow = db.prepare('SELECT summary, start_time, end_time FROM chat_summaries WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL').get(actualName, userId) as any
+        ) sub ORDER BY timestamp ASC
+      `, [actualName, userId, lim])
+      const summaryRow = await queryOne<{ summary: string; start_time: string; end_time: string }>('SELECT summary, start_time, end_time FROM chat_summaries WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL', [actualName, userId])
 
       return {
         matched_name: actualName,
@@ -143,12 +145,12 @@ function createTools(userId: string): Record<string, any> {
       search: z.string().optional().describe('搜索关键词'),
     }),
     execute: async ({ search }: { search?: string }) => {
-      const db = getDb()
-      const rows = db.prepare(`
+      const params: any[] = search ? [userId, `%${search}%`, `%${search}%`] : [userId]
+      const rows = await query(`
         SELECT chat_name, start_time, end_time, message_count, summary FROM chat_summaries
         WHERE summary IS NOT NULL AND user_id = ? ${search ? 'AND (chat_name LIKE ? OR summary LIKE ?)' : ''}
         ORDER BY end_time DESC LIMIT 20
-      `).all(userId, ...(search ? [`%${search}%`, `%${search}%`] : []))
+      `, params)
       return { summaries: rows }
     },
   },
@@ -161,11 +163,10 @@ function createTools(userId: string): Record<string, any> {
       limit: z.number().optional().describe('返回条数，默认20'),
     }),
     execute: async ({ keyword, contact_name, limit }: { keyword: string; contact_name?: string; limit?: number }) => {
-      const db = getDb()
       const lim = Math.min(limit ?? 20, 50)
       const rows = contact_name
-        ? db.prepare('SELECT contact_name, direction, content, timestamp FROM messages WHERE contact_name = ? AND user_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT ?').all(contact_name, userId, `%${keyword}%`, lim)
-        : db.prepare('SELECT contact_name, direction, content, timestamp FROM messages WHERE user_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT ?').all(userId, `%${keyword}%`, lim)
+        ? await query('SELECT contact_name, direction, content, timestamp FROM messages WHERE contact_name = ? AND user_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT ?', [contact_name, userId, `%${keyword}%`, lim])
+        : await query('SELECT contact_name, direction, content, timestamp FROM messages WHERE user_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT ?', [userId, `%${keyword}%`, lim])
       return { count: rows.length, results: rows }
     },
   },
@@ -174,19 +175,20 @@ function createTools(userId: string): Record<string, any> {
     description: '获取社交关系全局统计：联系人总数、消息总量、失联分布、最久未联系的人。',
     parameters: z.object({}),
     execute: async () => {
-      const db = getDb()
-      const total = (db.prepare('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?').get(userId) as any).n
-      const totalMsgs = (db.prepare('SELECT COUNT(*) as n FROM messages WHERE user_id = ?').get(userId) as any).n
-      const buckets = db.prepare(`
+      const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?', [userId])
+      const total = totalRow?.n ?? 0
+      const totalMsgsRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages WHERE user_id = ?', [userId])
+      const totalMsgs = totalMsgsRow?.n ?? 0
+      const buckets = await query(`
         SELECT CASE WHEN days >= 365 THEN '365天以上' WHEN days >= 90 THEN '90-365天'
           WHEN days >= 30 THEN '30-90天' WHEN days >= 7 THEN '7-30天' ELSE '7天内' END AS bucket, COUNT(*) as count
-        FROM (SELECT CAST((julianday('now') - julianday(last_contact_at)) AS INTEGER) AS days FROM contacts WHERE last_contact_at IS NOT NULL AND user_id = ?)
+        FROM (SELECT CAST(EXTRACT(EPOCH FROM NOW() - last_contact_at::timestamp) / 86400 AS INTEGER) AS days FROM contacts WHERE last_contact_at IS NOT NULL AND user_id = ?) sub
         GROUP BY bucket ORDER BY MIN(days) DESC
-      `).all(userId)
-      const overdue = db.prepare(`
-        SELECT name, message_count, CAST((julianday('now') - julianday(last_contact_at)) AS INTEGER) AS days_since
+      `, [userId])
+      const overdue = await query(`
+        SELECT name, message_count, CAST(EXTRACT(EPOCH FROM NOW() - last_contact_at::timestamp) / 86400 AS INTEGER) AS days_since
         FROM contacts WHERE last_contact_at IS NOT NULL AND user_id = ? ORDER BY days_since DESC LIMIT 10
-      `).all(userId)
+      `, [userId])
       return { total, totalMsgs, buckets, overdue }
     },
   },
@@ -198,25 +200,27 @@ function createTools(userId: string): Record<string, any> {
       limit: z.number().optional().describe('返回条数，默认50'),
     }),
     execute: async ({ minutes, limit }: { minutes?: number; limit?: number }) => {
-      const db = getDb()
-      const rows = db.prepare(`
+      const rows = await query<any>(`
         SELECT m.id, m.source_id as message_id, m.contact_name, m.content as incoming_content, m.timestamp as created_at,
           COALESCE(r.is_at_me, 0) as is_at_me, COALESCE(r.is_read, 0) as is_read, r.suggestion
         FROM messages m LEFT JOIN reply_suggestions r ON m.source_id = r.message_id
-        WHERE m.timestamp > datetime('now', '-' || ? || ' minutes') AND m.direction = 'received' AND m.user_id = ?
+        WHERE m.timestamp > NOW() - (? || ' minutes')::interval AND m.direction = 'received' AND m.user_id = ?
         ORDER BY m.timestamp ASC LIMIT ?
-      `).all(minutes ?? 60, userId, Math.min(limit ?? 50, 100)) as any[]
+      `, [minutes ?? 60, userId, Math.min(limit ?? 50, 100)])
 
       // Add recent_history context for each message (like MCP version)
-      const msgs = rows.map(row => ({
-        ...row,
-        is_at_me: !!row.is_at_me,
-        is_read: !!row.is_read,
-        suggestion: row.suggestion || null,
-        recent_history: (db.prepare(`
+      const msgs = await Promise.all(rows.map(async row => {
+        const history = await query<any>(`
           SELECT direction, content, timestamp FROM messages
           WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 10
-        `).all(row.contact_name, userId) as any[]).reverse(),
+        `, [row.contact_name, userId])
+        return {
+          ...row,
+          is_at_me: !!row.is_at_me,
+          is_read: !!row.is_read,
+          suggestion: row.suggestion || null,
+          recent_history: history.reverse(),
+        }
       }))
 
       const unread = msgs.filter(m => !m.is_read).length
@@ -232,12 +236,13 @@ function createTools(userId: string): Record<string, any> {
       limit: z.number().optional().describe('返回数量，默认20'),
     }),
     execute: async ({ topic, limit }: { topic?: number; limit?: number }) => {
-      const db = getDb()
       // Need feishu user token for approvals
-      const feishuUserId = (db.prepare("SELECT value FROM settings WHERE key = 'feishu_user_id' AND user_id = ?").get(userId) as any)?.value
+      const feishuUserRow = await queryOne<{ value: string }>("SELECT value FROM settings WHERE key = 'feishu_user_id' AND user_id = ?", [userId])
+      const feishuUserId = feishuUserRow?.value
       if (!feishuUserId) return { tasks: [], message: '未设置飞书用户ID，无法查询审批' }
 
-      const token = (db.prepare("SELECT value FROM settings WHERE key = 'feishu_user_access_token' AND user_id = ?").get(userId) as any)?.value
+      const tokenRow = await queryOne<{ value: string }>("SELECT value FROM settings WHERE key = 'feishu_user_access_token' AND user_id = ?", [userId])
+      const token = tokenRow?.value
       if (!token) return { tasks: [], message: '飞书未授权，无法查询审批' }
 
       try {

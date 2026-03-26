@@ -1,6 +1,6 @@
 // GET /api/messages/new — 获取最近新消息（移植自 MCP get_new_messages）
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { query } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
 export async function GET(req: NextRequest) {
@@ -10,9 +10,7 @@ export async function GET(req: NextRequest) {
   const minutes = parseInt(req.nextUrl.searchParams.get('minutes') || '30')
   const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') || '50'), 200)
 
-  const db = getDb()
-
-  const rows = db.prepare(`
+  const rows = await query<any>(`
     SELECT
       m.id,
       m.source_id as message_id,
@@ -24,11 +22,11 @@ export async function GET(req: NextRequest) {
       r.suggestion
     FROM messages m
     LEFT JOIN reply_suggestions r ON m.source_id = r.message_id
-    WHERE m.timestamp > datetime('now', '-' || ? || ' minutes')
+    WHERE m.timestamp > NOW() - (? || ' minutes')::interval
       AND m.direction = 'received'
     ORDER BY m.timestamp DESC
     LIMIT ?
-  `).all(minutes, limit) as any[]
+  `, [minutes, limit])
 
   const messages = rows.map(row => ({
     ...row,

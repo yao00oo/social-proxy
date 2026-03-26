@@ -1,6 +1,6 @@
 // GET /api/contacts/[name] — 联系人详情 + 聊天记录（移植自 MCP get_history）
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { query, queryOne } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
 export async function GET(
@@ -12,41 +12,41 @@ export async function GET(
 
   const { id: contactName } = await params
   const name = decodeURIComponent(contactName)
-  const db = getDb()
   const limit = 50
 
   // Contact info
-  const contact = db.prepare(`
+  const contact = await queryOne(`
     SELECT name, email, phone, feishu_open_id, last_contact_at, message_count,
       CASE WHEN last_contact_at IS NULL THEN 9999
-        ELSE CAST((julianday('now') - julianday(last_contact_at)) AS INTEGER)
+        ELSE EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer
       END AS days_since_last_contact
     FROM contacts WHERE name = ?
-  `).get(name)
+  `, [name])
 
   if (!contact) {
     return NextResponse.json({ error: '联系人不存在' }, { status: 404 })
   }
 
   // Total message count
-  const total = (db.prepare(
-    'SELECT COUNT(*) as n FROM messages WHERE contact_name = ?'
-  ).get(name) as any).n
+  const totalRow = await queryOne<{ n: number }>(
+    'SELECT COUNT(*) as n FROM messages WHERE contact_name = ?', [name]
+  )
+  const total = totalRow?.n || 0
 
   // Recent messages
-  const messages = db.prepare(`
+  const messages = await query(`
     SELECT direction, content, timestamp
     FROM (
       SELECT direction, content, timestamp FROM messages
       WHERE contact_name = ? ORDER BY timestamp DESC LIMIT ?
-    ) ORDER BY timestamp ASC
-  `).all(name, limit)
+    ) sub ORDER BY timestamp ASC
+  `, [name, limit])
 
   // Summary if exists
-  const summaryRow = db.prepare(
+  const summaryRow = await queryOne<{ summary: string; start_time: string; end_time: string }>(
     `SELECT summary, start_time, end_time FROM chat_summaries
-     WHERE chat_name = ? AND summary IS NOT NULL`
-  ).get(name) as any
+     WHERE chat_name = ? AND summary IS NOT NULL`, [name]
+  )
 
   return NextResponse.json({
     contact,

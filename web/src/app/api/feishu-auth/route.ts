@@ -2,7 +2,7 @@
 // GET  /api/feishu-auth   — 查询授权状态
 // POST /api/feishu-auth/complete — 拿 code 换 token（前端轮询到 code 后调用）
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { queryOne, exec } from '@/lib/db'
 import crypto from 'crypto'
 import https from 'https'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -33,13 +33,13 @@ export async function POST(req: NextRequest) {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const db = getDb()
-  const appId = (db.prepare(`SELECT value FROM settings WHERE key='feishu_app_id'`).get() as any)?.value
+  const appIdRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_app_id'`)
+  const appId = appIdRow?.value
   if (!appId) return NextResponse.json({ error: '请先填写飞书 App ID' }, { status: 400 })
 
   const state = crypto.randomBytes(16).toString('hex')
-  db.prepare(`INSERT INTO settings(key,value) VALUES('feishu_oauth_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(state)
-  db.prepare(`INSERT INTO settings(key,value) VALUES('feishu_auth_done','0') ON CONFLICT(key) DO UPDATE SET value='0'`).run()
+  await exec(`INSERT INTO settings(key,value) VALUES('feishu_oauth_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, [state])
+  await exec(`INSERT INTO settings(key,value) VALUES('feishu_auth_done','0') ON CONFLICT(key) DO UPDATE SET value='0'`)
 
   const params = new URLSearchParams({
     app_id: appId,
@@ -57,8 +57,7 @@ export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const db = getDb()
-  const done = (db.prepare(`SELECT value FROM settings WHERE key='feishu_auth_done'`).get() as any)?.value
-  const name = (db.prepare(`SELECT value FROM settings WHERE key='feishu_user_name'`).get() as any)?.value
-  return NextResponse.json({ done: done === '1', name: name || '' })
+  const doneRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_auth_done'`)
+  const nameRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_user_name'`)
+  return NextResponse.json({ done: doneRow?.value === '1', name: nameRow?.value || '' })
 }

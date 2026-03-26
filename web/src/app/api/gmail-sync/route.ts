@@ -1,7 +1,7 @@
 // POST /api/gmail-sync — 用 Gmail API 同步邮件到本地数据库
 // GET  /api/gmail-sync — 查询同步状态
 import { NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { query, queryOne, exec } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
 let syncRunning = false
@@ -19,20 +19,19 @@ function log(msg: string) { console.log(msg); syncLog.push(msg) }
 
 // 确保 token 有效，过期则刷新
 async function ensureToken(): Promise<string> {
-  const db = getDb()
-  const get = (key: string) => (db.prepare(`SELECT value FROM settings WHERE key=?`).get(key) as any)?.value || ''
-  const upsert = db.prepare(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+  const getSetting = async (key: string) => (await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key=?`, [key]))?.value || ''
+  const upsertSql = `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
 
-  let token = get('gmail_access_token')
-  const tokenTime = parseInt(get('gmail_token_time') || '0')
-  const expiresIn = parseInt(get('gmail_token_expires') || '3600')
-  const refreshToken = get('gmail_refresh_token')
+  let token = await getSetting('gmail_access_token')
+  const tokenTime = parseInt(await getSetting('gmail_token_time') || '0')
+  const expiresIn = parseInt(await getSetting('gmail_token_expires') || '3600')
+  const refreshToken = await getSetting('gmail_refresh_token')
 
   // 提前 5 分钟刷新
   if (Date.now() - tokenTime > (expiresIn - 300) * 1000 && refreshToken) {
     log('刷新 Gmail token...')
-    const clientId = get('gmail_client_id')
-    const clientSecret = get('gmail_client_secret')
+    const clientId = await getSetting('gmail_client_id')
+    const clientSecret = await getSetting('gmail_client_secret')
 
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -47,9 +46,9 @@ async function ensureToken(): Promise<string> {
     const data = await res.json()
     if (data.access_token) {
       token = data.access_token
-      upsert.run('gmail_access_token', token)
-      upsert.run('gmail_token_time', Date.now().toString())
-      upsert.run('gmail_token_expires', (data.expires_in || 3600).toString())
+      await exec(upsertSql, ['gmail_access_token', token])
+      await exec(upsertSql, ['gmail_token_time', Date.now().toString()])
+      await exec(upsertSql, ['gmail_token_expires', (data.expires_in || 3600).toString()])
       log('token 刷新成功')
     } else {
       throw new Error(`刷新 token 失败: ${data.error_description || data.error}`)
@@ -142,39 +141,39 @@ export async function POST() {
   ;(async () => {
     try {
       const token = await ensureToken()
-      const db = getDb()
-      const myEmail = (db.prepare(`SELECT value FROM settings WHERE key='gmail_email'`).get() as any)?.value || ''
+      const myEmailRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='gmail_email'`)
+      const myEmail = myEmailRow?.value || ''
 
       // 获取上次同步时间
-      db.exec(`CREATE TABLE IF NOT EXISTS email_sync_state (folder TEXT PRIMARY KEY, last_uid INTEGER DEFAULT 0)`)
-      const lastSyncRow = db.prepare(`SELECT last_uid FROM email_sync_state WHERE folder='gmail_last_ts'`).get() as any
+      await exec(`CREATE TABLE IF NOT EXISTS email_sync_state (folder TEXT PRIMARY KEY, last_uid INTEGER DEFAULT 0)`)
+      const lastSyncRow = await queryOne<{ last_uid: number }>(`SELECT last_uid FROM email_sync_state WHERE folder='gmail_last_ts'`)
       const lastSyncTs = lastSyncRow?.last_uid || 0
 
       // 构建查询：只拉上次同步后的邮件
-      let query = 'in:inbox OR in:sent'
+      let gmailQuery = 'in:inbox OR in:sent'
       if (lastSyncTs > 0) {
         const afterDate = new Date(lastSyncTs).toISOString().slice(0, 10).replace(/-/g, '/')
-        query = `(in:inbox OR in:sent) after:${afterDate}`
+        gmailQuery = `(in:inbox OR in:sent) after:${afterDate}`
       }
 
-      log(`搜索邮件: ${query}`)
-      const msgIds = await fetchMessages(token, query, 500)
+      log(`搜索邮件: ${gmailQuery}`)
+      const msgIds = await fetchMessages(token, gmailQuery, 500)
       log(`找到 ${msgIds.length} 封邮件`)
 
-      db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id) WHERE source_id IS NOT NULL`)
+      await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id) WHERE source_id IS NOT NULL`)
 
-      const insertMessage = db.prepare(`
-        INSERT OR IGNORE INTO messages(contact_name, direction, content, timestamp, source_id)
-        VALUES (?, ?, ?, ?, ?)
-      `)
-      const upsertContact = db.prepare(`
+      const insertMsgSql = `
+        INSERT INTO messages(contact_name, direction, content, timestamp, source_id)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
+      `
+      const upsertContactSql = `
         INSERT INTO contacts(name, email, last_contact_at, message_count)
         VALUES (?, ?, ?, 1)
         ON CONFLICT(name) DO UPDATE SET
           message_count = message_count + 1,
           last_contact_at = CASE WHEN excluded.last_contact_at > last_contact_at THEN excluded.last_contact_at ELSE last_contact_at END,
           email = CASE WHEN email IS NULL OR email = '' THEN excluded.email ELSE email END
-      `)
+      `
 
       let imported = 0, skipped = 0
       let maxTs = lastSyncTs
@@ -207,13 +206,12 @@ export async function POST() {
             ? `[邮件] 主题: ${subject}\n${preview}`
             : `[邮件] 主题: ${subject}`
 
-          const result = insertMessage.run(contact.name, direction, content, timestamp, sourceId)
-          if (result.changes > 0) {
-            upsertContact.run(contact.name, contact.email, timestamp)
+          try {
+            await exec(insertMsgSql, [contact.name, direction, content, timestamp, sourceId])
+            await exec(upsertContactSql, [contact.name, contact.email, timestamp])
             imported++
-            // 统计每个联系人新增消息数
             newMsgsByContact[contact.name] = (newMsgsByContact[contact.name] || 0) + 1
-          } else {
+          } catch {
             skipped++
           }
 
@@ -228,8 +226,8 @@ export async function POST() {
 
       // 保存同步进度
       if (maxTs > lastSyncTs) {
-        db.prepare(`INSERT INTO email_sync_state(folder, last_uid) VALUES('gmail_last_ts', ?)
-          ON CONFLICT(folder) DO UPDATE SET last_uid=excluded.last_uid`).run(maxTs)
+        await exec(`INSERT INTO email_sync_state(folder, last_uid) VALUES('gmail_last_ts', ?)
+          ON CONFLICT(folder) DO UPDATE SET last_uid=excluded.last_uid`, [maxTs])
       }
 
       // 统计需要摘要的联系人

@@ -1,38 +1,19 @@
 import { NextResponse } from 'next/server'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
-let syncRunning = false
-let syncLog: string[] = []
+let running = false
+let log: string[] = []
 let lastResult: any = null
 
 export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
-
-  return NextResponse.json({ running: syncRunning, log: syncLog.slice(-50), lastResult })
+  return NextResponse.json({ running, log: log.slice(-50), lastResult })
 }
 
 export async function POST() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
-
-  if (syncRunning) return NextResponse.json({ error: '同步进行中' }, { status: 409 })
-
-  syncRunning = true
-  syncLog = []
-  lastResult = null
-
-  ;(async () => {
-    try {
-      const { syncDocs } = await import('@mcp/feishu/docs')
-      lastResult = await syncDocs((msg) => syncLog.push(msg))
-    } catch (e: any) {
-      syncLog.push(`❌ 失败: ${e.message}`)
-      lastResult = { error: e.message }
-    } finally {
-      syncRunning = false
-    }
-  })()
-
-  return NextResponse.json({ ok: true })
+  // TODO: implement PG-based doc sync
+  return NextResponse.json({ ok: true, message: '文档同步功能即将上线' })
 }

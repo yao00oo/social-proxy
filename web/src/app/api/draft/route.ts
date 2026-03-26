@@ -1,6 +1,6 @@
 // POST /api/draft — AI 生成消息草稿（通过 OpenRouter）
 import { NextRequest } from 'next/server'
-import { getDb } from '@/lib/db'
+import { query, queryOne } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || ''
@@ -25,21 +25,21 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  const db = getDb()
   const contactName = typeof contact_id === 'number'
-    ? (db.prepare('SELECT name FROM contacts WHERE id = ?').get(contact_id) as any)?.name
+    ? (await queryOne<{ name: string }>('SELECT name FROM contacts WHERE id = ?', [contact_id]))?.name
     : contact_id
 
   // Get recent messages for context
-  const recentMsgs = db.prepare(`
+  const recentMsgs = await query<any>(`
     SELECT direction, content, timestamp FROM messages
     WHERE contact_name = ? ORDER BY timestamp DESC LIMIT 10
-  `).all(contactName || '') as any[]
+  `, [contactName || ''])
 
   // Get summary
-  const summaryRow = db.prepare(
-    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND summary IS NOT NULL`
-  ).get(contactName || '') as any
+  const summaryRow = await queryOne<{ summary: string }>(
+    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND summary IS NOT NULL`,
+    [contactName || '']
+  )
 
   const context = [
     summaryRow?.summary ? `关系摘要：${summaryRow.summary}` : '',

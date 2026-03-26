@@ -1,6 +1,6 @@
 // POST /api/feishu-complete — 前端拿到 code 后调此接口换 token
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { queryOne, exec } from '@/lib/db'
 import https from 'https'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
@@ -29,9 +29,10 @@ export async function POST(req: NextRequest) {
   const { code } = await req.json() as { code: string }
   if (!code) return NextResponse.json({ error: '缺少 code' }, { status: 400 })
 
-  const db = getDb()
-  const appId = (db.prepare(`SELECT value FROM settings WHERE key='feishu_app_id'`).get() as any)?.value
-  const appSecret = (db.prepare(`SELECT value FROM settings WHERE key='feishu_app_secret'`).get() as any)?.value
+  const appIdRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_app_id'`)
+  const appId = appIdRow?.value
+  const appSecretRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_app_secret'`)
+  const appSecret = appSecretRow?.value
 
   // 1. 获取 app_access_token
   const appTokenRes = await httpsPost(
@@ -54,13 +55,13 @@ export async function POST(req: NextRequest) {
 
   const d = userTokenRes.data
   console.log('[feishu-complete] token data keys:', Object.keys(d || {}))
-  const upsert = db.prepare(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
-  upsert.run('feishu_user_access_token', d.access_token ?? '')
-  upsert.run('feishu_refresh_token', d.refresh_token ?? '')
-  upsert.run('feishu_user_name', d.name ?? '')
-  upsert.run('feishu_user_id', d.open_id ?? d.user_id ?? '')
-  upsert.run('feishu_token_time', Date.now().toString())
-  upsert.run('feishu_auth_done', '1')
+  const upsertSql = `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+  await exec(upsertSql, ['feishu_user_access_token', d.access_token ?? ''])
+  await exec(upsertSql, ['feishu_refresh_token', d.refresh_token ?? ''])
+  await exec(upsertSql, ['feishu_user_name', d.name ?? ''])
+  await exec(upsertSql, ['feishu_user_id', d.open_id ?? d.user_id ?? ''])
+  await exec(upsertSql, ['feishu_token_time', Date.now().toString()])
+  await exec(upsertSql, ['feishu_auth_done', '1'])
 
   return NextResponse.json({ ok: true, name: d.name ?? '' })
 }

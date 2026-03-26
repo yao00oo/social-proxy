@@ -1,6 +1,6 @@
 // POST /api/send/feishu — 发送飞书消息（移植自 MCP send_feishu_message）
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { queryOne, exec } from '@/lib/db'
 import { getSetting, getAppAccessToken, sendMessage } from '@/lib/feishu'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
@@ -14,28 +14,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '缺少 contact_name 和 content' }, { status: 400 })
   }
 
-  const db = getDb()
-
   // 1. Find receive_id
   let receiveId: string | null = null
   let receiveIdType: 'open_id' | 'chat_id' = 'open_id'
 
-  const userRow = db.prepare(
-    'SELECT open_id FROM feishu_users WHERE name = ? LIMIT 1'
-  ).get(contact_name) as any
+  const userRow = await queryOne<{ open_id: string }>(
+    'SELECT open_id FROM feishu_users WHERE name = ? LIMIT 1', [contact_name]
+  )
   if (userRow) {
     receiveId = userRow.open_id
   } else {
-    const contactRow = db.prepare(
-      'SELECT feishu_open_id FROM contacts WHERE name = ? AND feishu_open_id IS NOT NULL'
-    ).get(contact_name) as any
+    const contactRow = await queryOne<{ feishu_open_id: string }>(
+      'SELECT feishu_open_id FROM contacts WHERE name = ? AND feishu_open_id IS NOT NULL', [contact_name]
+    )
     receiveId = contactRow?.feishu_open_id ?? null
   }
 
   if (!receiveId) {
-    const stateRow = db.prepare(
-      'SELECT chat_id FROM feishu_sync_state WHERE chat_name = ? LIMIT 1'
-    ).get(contact_name) as any
+    const stateRow = await queryOne<{ chat_id: string }>(
+      'SELECT chat_id FROM feishu_sync_state WHERE chat_name = ? LIMIT 1', [contact_name]
+    )
     if (!stateRow) {
       return NextResponse.json({
         success: false,
@@ -47,7 +45,7 @@ export async function POST(req: NextRequest) {
   }
 
   // 2. Check permission mode
-  const mode = getSetting('permission_mode') || 'suggest'
+  const mode = await getSetting('permission_mode') || 'suggest'
   if (mode === 'suggest') {
     return NextResponse.json({
       success: true,
@@ -64,12 +62,14 @@ export async function POST(req: NextRequest) {
 
     // 4. Record in messages table
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    db.prepare(
-      'INSERT INTO messages(contact_name, direction, content, timestamp, source_id) VALUES (?, ?, ?, ?, ?)'
-    ).run(contact_name, 'sent', content, now, message_id)
-    db.prepare(
-      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?'
-    ).run(now, contact_name)
+    await exec(
+      'INSERT INTO messages(contact_name, direction, content, timestamp, source_id) VALUES (?, ?, ?, ?, ?)',
+      [contact_name, 'sent', content, now, message_id]
+    )
+    await exec(
+      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?',
+      [now, contact_name]
+    )
 
     return NextResponse.json({
       success: true,
