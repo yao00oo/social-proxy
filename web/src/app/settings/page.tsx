@@ -135,8 +135,8 @@ function SourceCard({
   }
 
   return (
-    <div className={`bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-3.5 h-[100px] flex flex-col justify-between ${onAction && !connected ? 'group cursor-pointer hover:bg-surface-container-low transition-colors' : ''}`}
-      onClick={onAction && !connected ? onAction : undefined}
+    <div className={`bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-3.5 h-[100px] flex flex-col justify-between ${onAction ? 'group cursor-pointer hover:bg-surface-container-low transition-colors' : ''}`}
+      onClick={onAction || undefined}
     >
       <div className="flex items-start gap-2.5">
         <span className={`material-symbols-outlined text-xl ${iconClass}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
