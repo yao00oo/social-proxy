@@ -51,7 +51,7 @@ export async function GET() {
 
   const recent = await query(`
     SELECT name, email, message_count, last_contact_at
-    FROM contacts WHERE last_contact_at >= NOW() - INTERVAL '30 days'
+    FROM contacts WHERE last_contact_at::timestamp >= NOW() - INTERVAL '30 days'
     ORDER BY last_contact_at DESC LIMIT 20
   `)
 

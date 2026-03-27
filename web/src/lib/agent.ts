@@ -204,7 +204,7 @@ function createTools(userId: string): Record<string, any> {
         SELECT m.id, m.source_id as message_id, m.contact_name, m.content as incoming_content, m.timestamp as created_at,
           COALESCE(r.is_at_me, 0) as is_at_me, COALESCE(r.is_read, 0) as is_read, r.suggestion
         FROM messages m LEFT JOIN reply_suggestions r ON m.source_id = r.message_id
-        WHERE m.timestamp > NOW() - (? || ' minutes')::interval AND m.direction = 'received' AND m.user_id = ?
+        WHERE m.timestamp::timestamp > NOW() - (? || ' minutes')::interval AND m.direction = 'received' AND m.user_id = ?
         ORDER BY m.timestamp ASC LIMIT ?
       `, [minutes ?? 60, userId, Math.min(limit ?? 50, 100)])
 

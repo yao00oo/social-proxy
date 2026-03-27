@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
       r.suggestion
     FROM messages m
     LEFT JOIN reply_suggestions r ON m.source_id = r.message_id
-    WHERE m.timestamp > NOW() - (? || ' minutes')::interval
+    WHERE m.timestamp::timestamp > NOW() - (? || ' minutes')::interval
       AND m.direction = 'received'
     ORDER BY m.timestamp DESC
     LIMIT ?
