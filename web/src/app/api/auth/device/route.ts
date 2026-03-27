@@ -33,6 +33,7 @@ export async function POST() {
 
 // GET: 前端登录后调用，关联 device code 与用户
 export async function GET(req: NextRequest) {
+  try {
   await ensureDeviceCodesTable()
   const code = req.nextUrl.searchParams.get('code')
   if (!code) return NextResponse.json({ error: 'missing code' }, { status: 400 })
@@ -67,4 +68,8 @@ export async function GET(req: NextRequest) {
   )
 
   return NextResponse.json({ ok: true })
+  } catch (e: any) {
+    console.error('[device-auth] error:', e)
+    return NextResponse.json({ error: e.message || 'internal error' }, { status: 500 })
+  }
 }

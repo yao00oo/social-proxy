@@ -17,11 +17,19 @@ function DeviceAuthContent() {
       // Authorize the device
       setAuthStatus('authorizing')
       fetch(`/api/auth/device?code=${code}`)
-        .then(r => {
-          if (r.ok || r.redirected) setAuthStatus('done')
-          else setAuthStatus('error')
+        .then(async r => {
+          if (r.ok) {
+            setAuthStatus('done')
+          } else {
+            const text = await r.text().catch(() => '')
+            console.error('Device auth failed:', r.status, text)
+            setAuthStatus('error')
+          }
         })
-        .catch(() => setAuthStatus('error'))
+        .catch(e => {
+          console.error('Device auth error:', e)
+          setAuthStatus('error')
+        })
     }
   }, [code, status, authStatus])
 
