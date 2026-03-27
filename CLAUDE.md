@@ -9,23 +9,53 @@ AI 社交关系管理工具。用户通过 Google 登录 → 连接飞书/Gmail 
 
 ```
 social-proxy/
-├── web/                    # Next.js 16 前端（部署到 Vercel）
-│   ├── src/app/            # 页面和 API routes
-│   │   ├── page.tsx        # 主页（AI 对话 + 联系人侧边栏）
-│   │   ├── settings/       # 设置页（数据源配置）
-│   │   ├── login/          # 登录页
-│   │   └── api/            # API routes（25+）
-│   ├── src/lib/            # 共享库
-│   │   ├── db.ts           # Neon PostgreSQL 连接（query/queryOne/exec）
-│   │   ├── agent.ts        # AI 对话（Vercel AI SDK + OpenRouter）
-│   │   ├── feishu.ts       # 飞书 API 封装
-│   │   ├── schema.ts       # Drizzle ORM schema
-│   │   └── auth-helper.ts  # 认证 helper（getUserId）
-│   ├── src/auth.ts         # NextAuth v4 配置（Google 登录）
-│   └── src/middleware.ts   # 路由保护（cookie 检查）
-├── mcp-server/             # MCP Server（本地 Claude 用，线上不用）
-├── relay-worker/           # Cloudflare Worker（OAuth 中继）
-└── images/                 # 飞书同步的图片（gitignore）
+├── web/                        # Next.js 16 前端（部署到 Vercel）
+│   ├── src/app/
+│   │   ├── page.tsx            # 主页（AI 对话 + 联系人侧边栏 + 同步进度条）
+│   │   ├── settings/page.tsx   # 设置页（数据源卡片 + 飞书引导教程）
+│   │   ├── login/page.tsx      # Google 登录页
+│   │   ├── providers.tsx       # SessionProvider 客户端包装
+│   │   ├── contact/[id]/       # 联系人详情页
+│   │   └── api/
+│   │       ├── auth/[...nextauth]/  # NextAuth 登录/回调
+│   │       ├── agent/          # AI 对话（流式）
+│   │       ├── feishu-auth/    # 飞书 OAuth 授权
+│   │       ├── feishu-complete/# 飞书 OAuth code 换 token
+│   │       ├── feishu-sync/    # 飞书消息同步（增量，支持续传）
+│   │       ├── feishu-docs/    # 飞书文档同步
+│   │       ├── gmail-auth/     # Gmail OAuth
+│   │       ├── gmail-complete/ # Gmail OAuth 回调
+│   │       ├── gmail-sync/     # Gmail 邮件同步
+│   │       ├── email-sync/     # IMAP 邮件同步
+│   │       ├── sync-status/    # 全局同步状态（所有数据源）
+│   │       ├── contacts/       # 联系人 CRUD
+│   │       ├── messages/       # 消息查询
+│   │       ├── search/         # 消息搜索
+│   │       ├── stats/          # 统计数据
+│   │       ├── settings/       # 用户设置
+│   │       ├── import/         # 微信/WhatsApp 导入
+│   │       ├── send/           # 发送消息（飞书/邮件）
+│   │       ├── draft/          # AI 草稿生成
+│   │       ├── summaries/      # 会话摘要
+│   │       └── health/         # 健康检查（公开）
+│   ├── src/lib/
+│   │   ├── db.ts               # Neon PG 连接（query/queryOne/exec）
+│   │   ├── agent.ts            # AI 对话引擎（9 个工具函数）
+│   │   ├── feishu.ts           # 飞书 API（getSetting/getAppAccessToken）
+│   │   ├── schema.ts           # Drizzle ORM schema（所有表定义）
+│   │   └── auth-helper.ts      # getUserId()（自动创建 PG 用户）
+│   ├── src/auth.ts             # NextAuth v4（JWT + Google + 自动 upsert user）
+│   ├── src/middleware.ts       # 路由保护（cookie 检查，非 Edge）
+│   └── src/types/next-auth.d.ts # NextAuth 类型扩展
+├── mcp-server/                 # MCP Server（本地 Claude Desktop 用）
+│   ├── src/                    # 业务逻辑（工具函数、飞书API、同步）
+│   └── drizzle.config.ts       # Drizzle Kit 配置
+├── relay-worker/               # Cloudflare Worker（relay.botook.ai）
+│   ├── src/index.ts            # OAuth 中继 + 飞书事件队列
+│   └── wrangler.toml           # Cloudflare 部署配置
+├── CLAUDE.md                   # 本文件
+├── .gitignore                  # 排除 node_modules/images/.env.local/*.db
+└── .env.example                # 环境变量模板
 ```
 
 ## 技术栈
@@ -100,19 +130,26 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 | `/api/messages/new` | GET | 最近消息 |
 | `/api/feishu-auth` | GET/POST | 飞书 OAuth |
 | `/api/feishu-complete` | POST | 飞书 OAuth 回调 |
-| `/api/feishu-sync` | GET/POST | 飞书消息同步 |
+| `/api/feishu-sync` | GET/POST | 飞书消息同步（增量，支持续传） |
+| `/api/sync-status` | GET | 全局同步状态（所有数据源，主页轮询用） |
 | `/api/settings` | GET/POST | 用户设置 |
+| `/api/import` | POST | 微信/WhatsApp 聊天记录导入 |
+| `/api/send/feishu` | POST | 通过飞书发消息 |
+| `/api/send/email` | POST | 通过邮件发消息 |
 
 所有 API（除 health/auth）都需要登录，通过 `getUserId()` 获取当前用户 ID。
+`getUserId()` 会自动在 PG 的 users 表创建用户记录（JWT 模式不走 adapter）。
 
 ## 飞书同步机制
 
-1. 用户在设置页授权飞书（OAuth，回调走 relay.botook.ai）
-2. 点同步 → POST `/api/feishu-sync` → 拉会话列表 → 逐个拉消息
+1. 用户在设置页通过 6 步引导教程创建飞书应用并授权（OAuth 回调走 relay.botook.ai）
+2. 点同步 → POST `/api/feishu-sync` → 拉会话列表（`sort_type=ByActiveTimeDesc`，最近活跃的先同步）→ 逐个拉消息
 3. 增量同步：每个会话记录 `last_sync_ts`，只拉新消息
-4. Vercel 60 秒超时保护：接近超时自动停止，前端自动续传
-5. 支持两种模式：环境变量（共享应用）或用户自建应用
+4. Vercel 60 秒超时保护：接近超时自动停止，前端自动续传（递归调用 handleFeishuSync）
+5. 支持两种模式：`FEISHU_APP_ID` 环境变量（共享应用）或用户自建应用（自行填写 App ID/Secret）
 6. `POST /api/feishu-sync { reset: true }` 清空旧数据重新全量同步
+7. **同步状态持久化到 DB**（`settings` 表 key=`feishu_sync_status`），因为 Vercel serverless 实例不共享内存，GET 和 POST 可能在不同实例
+8. 主页通过 `/api/sync-status` 每 5 秒轮询显示全局进度
 
 ## 飞书 API 字段参考（避免踩坑）
 
@@ -189,7 +226,7 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 
 ## 注意事项
 
-- **不要加 localhost 回调**：所有 OAuth 回调只用 botook.ai
+- **不要加 localhost 或其他域名的 OAuth 回调**：所有 OAuth 回调只用 botook.ai，不要建议用户加任何其他域名
 - **Vercel serverless 限制**：函数最长 60 秒（Hobby），不能 fire-and-forget
 - **PG 查询是异步的**：所有 DB 操作用 `await query()/queryOne()/exec()`
 - **node_modules 不提交**：.gitignore 已配置
