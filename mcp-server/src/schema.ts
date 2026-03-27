@@ -149,24 +149,23 @@ export const messages = pgTable('messages', {
   id: serial('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   threadId: integer('thread_id').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  // 冗余 channelId（避免查消息来源时 JOIN threads）
   channelId: integer('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
   // sent | received
   direction: text('direction').notNull(),
   // 发送者的 identity ID（可关联到 contact）
   senderIdentityId: integer('sender_identity_id'),
-  // 冗余存发送者名（查询方便）
+  // 冗余存发送者名（查询方便，避免 JOIN contact_identities）
   senderName: text('sender_name'),
-  // 消息内容（纯文本或主要文本）
   content: text('content').notNull(),
   // text | image | file | email | card | audio | video | sticker | system
   msgType: text('msg_type').default('text'),
   timestamp: text('timestamp').notNull(),
   // 平台消息 ID（去重用）
   platformMsgId: text('platform_msg_id'),
-  // 平台特有数据 JSON：
-  // 邮件: { subject, to, cc, bcc, html }
-  // 飞书: { mentions: [...], parent_id, image_key }
-  // 微信: { msg_svr_id }
+  // 已读标记
+  isRead: integer('is_read').default(0),
+  // 平台特有数据 JSON
   metadata: jsonb('metadata').default({}),
 }, (t) => [
   index('idx_messages_user_thread').on(t.userId, t.threadId),
@@ -216,7 +215,9 @@ export const documents = pgTable('documents', {
 ])
 
 // ════════════════════════════════════════════════════════
-// Settings — 用户配置（保留 KV 模式）
+// Settings — 用户偏好（KV 模式）
+// 只存用户级别偏好：ai_model, language, notification 等
+// 渠道凭证/同步配置存在 channels.credentials / channels.syncState
 // ════════════════════════════════════════════════════════
 
 export const settings = pgTable('settings', {
