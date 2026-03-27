@@ -392,8 +392,8 @@ async function fullSync(userId: string) {
       await log(`  [${pct}%] 同步 ${chatIndex}/${chats.length}: ${chat.name}`)
 
       try {
-        // Rate limit: wait 500ms between chats to avoid feishu API throttling (99991400)
-        if (chatIndex > 1) await new Promise(r => setTimeout(r, 500))
+        // Rate limit: wait 2s between chats to avoid feishu API throttling (99991400)
+        if (chatIndex > 1) await new Promise(r => setTimeout(r, 2000))
         const msgs = await listMessages(userToken, chat.chat_id, msgStartTime)
         if (msgs.length === 0) {
           await log(`    -> 无新消息`)
