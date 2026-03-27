@@ -303,24 +303,18 @@ async function fullSync(userId: string) {
       )
     }
 
-    // 3. Sort chats: unsynced first (last_sync_ts='0'), then by last_sync_ts ascending (oldest first)
+    // 3. Sync chats in API order (ByActiveTimeDesc — most recently active first)
     const syncStates = await query<{ chat_id: string; last_sync_ts: string }>(
       `SELECT chat_id, last_sync_ts FROM feishu_sync_state WHERE user_id = ?`,
       [userId],
     )
     const stateMap = new Map(syncStates.map(s => [s.chat_id, s.last_sync_ts]))
 
-    // Unsynced chats first (in API recency order), then already-synced (oldest sync first)
-    const unsynced = chats.filter(c => (stateMap.get(c.chat_id) || '0') === '0')
-    const synced = chats.filter(c => (stateMap.get(c.chat_id) || '0') !== '0')
-      .sort((a, b) => parseInt(stateMap.get(a.chat_id) || '0') - parseInt(stateMap.get(b.chat_id) || '0'))
-    const sortedChats = [...unsynced, ...synced]
-
     let chatIndex = 0
-    for (const chat of sortedChats) {
+    for (const chat of chats) {
       // Check timeout — stop early if approaching Vercel limit
       if (Date.now() - startTime > TIMEOUT_MS) {
-        result.remaining = sortedChats.length - chatIndex
+        result.remaining = chats.length - chatIndex
         log(`⏱ 接近超时，已处理 ${chatIndex} 个会话，剩余 ${result.remaining} 个`)
         break
       }
@@ -380,7 +374,7 @@ async function fullSync(userId: string) {
                 `INSERT INTO feishu_users (user_id, open_id, name)
                  VALUES (?, ?, ?)
                  ON CONFLICT (user_id, open_id) DO UPDATE SET name = EXCLUDED.name`,
-                [userId, msg.sender_id, msg.sender_name],
+                [userId, msg.sender_id, resolvedName],
               )
             }
           }
@@ -439,7 +433,7 @@ async function fullSync(userId: string) {
                     `INSERT INTO feishu_users (user_id, open_id, name)
                      VALUES (?, ?, ?)
                      ON CONFLICT (user_id, open_id) DO UPDATE SET name = EXCLUDED.name`,
-                    [userId, msg.sender_id, msg.sender_name],
+                    [userId, msg.sender_id, resolvedName],
                   )
                 }
               }
@@ -488,6 +482,18 @@ async function quickSync(userId: string) {
     let userToken = await ensureValidToken(userId)
     const myName = await getSetting('feishu_user_name', userId)
     const myUserId = await getSetting('feishu_user_id', userId)
+
+    // Build sender name cache
+    const senderNameCache = new Map<string, string>()
+    const cachedUsers = await query<{ open_id: string; name: string }>(
+      'SELECT open_id, name FROM feishu_users WHERE user_id = ?', [userId]
+    )
+    for (const u of cachedUsers) senderNameCache.set(u.open_id, u.name)
+
+    function resolveSenderName(senderId: string, isSelf: boolean): string {
+      if (isSelf) return myName || '我'
+      return senderNameCache.get(senderId) || senderId || '未知'
+    }
 
     // Only check chats active in last 90 days
     const since = String(Date.now() - 90 * 24 * 60 * 60 * 1000)
