@@ -6,20 +6,18 @@ export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get('code')
   if (!code) return NextResponse.json({ error: 'missing code' }, { status: 400 })
 
-  const row = await queryOne<{ value: string }>(
-    `SELECT value FROM settings WHERE user_id = '__device__' AND key = ?`,
-    [`device_code_${code}`]
+  const row = await queryOne<{ status: string; user_id: string; api_token: string; expires_at: string }>(
+    `SELECT status, user_id, api_token, expires_at FROM device_codes WHERE code = ?`,
+    [code]
   )
 
   if (!row) return NextResponse.json({ status: 'not_found' }, { status: 404 })
 
-  const data = JSON.parse(row.value)
-
-  if (data.status === 'authorized') {
-    return NextResponse.json({ status: 'authorized', token: data.apiToken, userId: data.userId })
+  if (row.status === 'authorized') {
+    return NextResponse.json({ status: 'authorized', token: row.api_token, userId: row.user_id })
   }
 
-  if (new Date(data.expiresAt) < new Date()) {
+  if (new Date(row.expires_at) < new Date()) {
     return NextResponse.json({ status: 'expired' })
   }
 
