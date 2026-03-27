@@ -1,5 +1,6 @@
 import type { NextAuthOptions } from 'next-auth'
 import GoogleProvider from 'next-auth/providers/google'
+import { exec } from '@/lib/db'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -15,6 +16,18 @@ export const authOptions: NextAuthOptions = {
     signIn: '/login',
   },
   callbacks: {
+    async signIn({ user }) {
+      // Auto-create user in PG if not exists (JWT mode doesn't use adapter)
+      try {
+        await exec(
+          `INSERT INTO users(id, name, email, image) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, image=excluded.image`,
+          [user.id, user.name || '', user.email || '', user.image || '']
+        )
+      } catch (e) {
+        console.error('[auth] failed to upsert user:', e)
+      }
+      return true
+    },
     jwt({ token, user }) {
       if (user) {
         token.id = user.id
