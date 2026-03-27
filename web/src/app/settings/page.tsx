@@ -789,8 +789,9 @@ export default function SettingsPage() {
               icon="sms"
               iconClass="text-green-600"
               title="iMessage"
-              subtitle="点击导入iCloud记录"
-              actionLabel="导入"
+              subtitle="通过 Mac 同步"
+              actionLabel="设置"
+              onAction={() => setExpandedCard(expandedCard === 'imessage' ? null : 'imessage')}
             />
 
             {/* WhatsApp */}
@@ -931,6 +932,62 @@ export default function SettingsPage() {
                   userName={feishuUserName}
                 />
               )}
+            </div>
+          )}
+
+          {/* iMessage expanded panel */}
+          {expandedCard === 'imessage' && (
+            <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-on-surface">iMessage 同步设置</p>
+                <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              </div>
+
+              <p className="text-xs text-on-surface-variant">
+                通过 botook-agent 在你的 Mac 上读取 iMessage 数据库，自动同步所有聊天记录和新消息。
+              </p>
+
+              {/* Step 1 */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary-container text-white flex items-center justify-center text-xs font-bold">1</div>
+                  <p className="text-sm font-medium text-on-surface">在 Mac 终端运行以下命令</p>
+                </div>
+                <div className="bg-surface rounded-lg p-3 font-mono text-sm text-primary relative group">
+                  <code>curl -fsSL https://botook.ai/install.sh | bash</code>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText('curl -fsSL https://botook.ai/install.sh | bash') }}
+                    className="absolute right-2 top-2 text-[10px] px-2 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest transition-colors opacity-0 group-hover:opacity-100"
+                  >复制</button>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary-container text-white flex items-center justify-center text-xs font-bold">2</div>
+                  <p className="text-sm font-medium text-on-surface">浏览器弹出后，用 Google 账号登录</p>
+                </div>
+                <p className="text-xs text-on-surface-variant ml-9">和你在 botook.ai 登录的账号一致，数据会自动关联。</p>
+              </div>
+
+              {/* Step 3 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className="w-6 h-6 rounded-full bg-primary-container text-white flex items-center justify-center text-xs font-bold">3</div>
+                  <p className="text-sm font-medium text-on-surface">授权完成，自动开始同步</p>
+                </div>
+                <p className="text-xs text-on-surface-variant ml-9">历史消息一次性导入，新消息实时同步。首次可能需要授权"完全磁盘访问"权限。</p>
+              </div>
+
+              <div className="bg-surface rounded-lg p-3 text-xs text-on-surface-variant space-y-1">
+                <p className="font-medium text-on-surface">💡 常见问题</p>
+                <p>• 需要 macOS 系统和 Node.js</p>
+                <p>• 如果提示权限不足，在「系统设置 → 隐私与安全性 → 完全磁盘访问」中添加终端</p>
+                <p>• agent 会在后台运行，关闭终端后需要重新启动</p>
+              </div>
             </div>
           )}
         </div>
