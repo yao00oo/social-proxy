@@ -182,7 +182,7 @@ async function listChats(userToken: string): Promise<Array<{ chat_id: string; na
   let pageToken = ''
 
   while (true) {
-    const params: Record<string, string> = { page_size: '100' }
+    const params: Record<string, string> = { page_size: '100', sort_type: 'ByActiveTimeDesc' }
     if (pageToken) params.page_token = pageToken
 
     const res = await feishuGet('/im/v1/chats', userToken, params)
@@ -275,6 +275,18 @@ async function fullSync(userId: string) {
     const myName = await getSetting('feishu_user_name', userId)
     const myUserId = await getSetting('feishu_user_id', userId)
 
+    // 0. Build sender name cache from feishu_users
+    const senderNameCache = new Map<string, string>()
+    const cachedUsers = await query<{ open_id: string; name: string }>(
+      'SELECT open_id, name FROM feishu_users WHERE user_id = ?', [userId]
+    )
+    for (const u of cachedUsers) senderNameCache.set(u.open_id, u.name)
+
+    function resolveSenderName(senderId: string, isSelf: boolean): string {
+      if (isSelf) return myName || '我'
+      return senderNameCache.get(senderId) || senderId || '未知'
+    }
+
     // 1. List all chats
     log('获取会话列表...')
     const chats = await listChats(userToken)
@@ -336,7 +348,7 @@ async function fullSync(userId: string) {
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
           const contactName = chat.chat_type === 'p2p' ? chat.name : chat.name
-          const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
+          const senderDisplay = resolveSenderName(msg.sender_id, isSelf)
 
           // Insert message (ON CONFLICT DO NOTHING for dedup by source_id)
           await exec(
@@ -362,7 +374,8 @@ async function fullSync(userId: string) {
             )
 
             // Upsert feishu_users
-            if (msg.sender_id && msg.sender_name && !msg.sender_name.startsWith('ou_')) {
+            const resolvedName = senderNameCache.get(msg.sender_id)
+            if (msg.sender_id && resolvedName && !resolvedName.startsWith('ou_')) {
               await exec(
                 `INSERT INTO feishu_users (user_id, open_id, name)
                  VALUES (?, ?, ?)
@@ -399,7 +412,7 @@ async function fullSync(userId: string) {
               const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
               const direction = isSelf ? 'sent' : 'received'
               const contactName = chat.name
-              const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
+              const senderDisplay = resolveSenderName(msg.sender_id, isSelf)
 
               await exec(
                 `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
@@ -420,7 +433,8 @@ async function fullSync(userId: string) {
                      END`,
                   [userId, contactName, msg.sender_id || null, ts],
                 )
-                if (msg.sender_id && msg.sender_name && !msg.sender_name.startsWith('ou_')) {
+                const resolvedName = senderNameCache.get(msg.sender_id)
+            if (msg.sender_id && resolvedName && !resolvedName.startsWith('ou_')) {
                   await exec(
                     `INSERT INTO feishu_users (user_id, open_id, name)
                      VALUES (?, ?, ?)
@@ -507,7 +521,7 @@ async function quickSync(userId: string) {
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
           const contactName = chat.chat_name
-          const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
+          const senderDisplay = resolveSenderName(msg.sender_id, isSelf)
 
           await exec(
             `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
