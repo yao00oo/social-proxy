@@ -1,5 +1,9 @@
 // API: POST /api/feishu-sync — 触发飞书消息同步
 // GET  /api/feishu-sync — 查询同步状态
+
+// Vercel serverless: extend timeout to 60s (Hobby) or 300s (Pro)
+export const maxDuration = 60
+
 import { NextResponse } from 'next/server'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 import { getSetting } from '@/lib/feishu'
@@ -285,8 +289,24 @@ async function fullSync(userId: string) {
       )
     }
 
-    // 3. Sync each chat
-    for (const chat of chats) {
+    // 3. Sync chats — limit to 20 per request to stay within Vercel timeout
+    // Prioritize chats that haven't been synced yet (last_sync_ts='0')
+    const MAX_CHATS_PER_SYNC = 20
+    const unsyncedChats = await query<{ chat_id: string }>(
+      `SELECT chat_id FROM feishu_sync_state WHERE user_id = ? AND last_sync_ts = '0' LIMIT ?`,
+      [userId, MAX_CHATS_PER_SYNC]
+    )
+    const syncedRecently = MAX_CHATS_PER_SYNC - unsyncedChats.length > 0
+      ? await query<{ chat_id: string }>(
+          `SELECT chat_id FROM feishu_sync_state WHERE user_id = ? AND last_sync_ts != '0' ORDER BY last_sync_ts ASC LIMIT ?`,
+          [userId, MAX_CHATS_PER_SYNC - unsyncedChats.length]
+        )
+      : []
+    const chatIdsToSync = new Set([...unsyncedChats.map(r => r.chat_id), ...syncedRecently.map(r => r.chat_id)])
+    const chatsToSync = chats.filter(c => chatIdsToSync.has(c.chat_id))
+    log(`本次同步 ${chatsToSync.length} / ${chats.length} 个会话`)
+
+    for (const chat of chatsToSync) {
       const stateRow = await queryOne<{ last_sync_ts: string }>(
         `SELECT last_sync_ts FROM feishu_sync_state WHERE user_id = ? AND chat_id = ?`,
         [userId, chat.chat_id],
@@ -572,7 +592,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, autoSync: newInterval > 0, autoSyncSeconds: newInterval })
   }
 
-  // Mode 2: Trigger full sync
+  // Mode 2: Trigger full sync (runs synchronously within the request)
   if (syncRunning) {
     return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
   }
@@ -580,11 +600,13 @@ export async function POST(req: Request) {
   syncRunning = true
   syncLog = ['开始全量同步...']
 
-  // Run async — return immediately
-  fullSync(userId).catch((err) => {
+  try {
+    await fullSync(userId)
+    return NextResponse.json({ ok: true, message: '同步完成', result: lastResult })
+  } catch (err: any) {
     syncLog.push(`同步异常: ${err.message}`)
+    return NextResponse.json({ ok: false, message: err.message, result: lastResult })
+  } finally {
     syncRunning = false
-  })
-
-  return NextResponse.json({ ok: true, message: '同步已启动' })
+  }
 }
