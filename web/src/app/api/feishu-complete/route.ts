@@ -4,6 +4,22 @@ import { exec, queryOne } from '@/lib/db'
 import https from 'https'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
+function httpsGet(url: string, headers: Record<string, string> = {}): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url)
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname + u.search, method: 'GET',
+      headers: { ...headers },
+    }, (res) => {
+      let data = ''
+      res.on('data', c => data += c)
+      res.on('end', () => { try { resolve(JSON.parse(data)) } catch { reject(new Error(data.slice(0, 200))) } })
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
+
 function httpsPost(url: string, body: object, headers: Record<string, string> = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     const bodyStr = JSON.stringify(body)
@@ -57,10 +73,25 @@ export async function POST(req: NextRequest) {
   const upsertSql = `INSERT INTO settings(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value`
   await exec(upsertSql, [userId, 'feishu_user_access_token', d.access_token ?? ''])
   await exec(upsertSql, [userId, 'feishu_refresh_token', d.refresh_token ?? ''])
-  await exec(upsertSql, [userId, 'feishu_user_name', d.name ?? ''])
-  await exec(upsertSql, [userId, 'feishu_user_id', d.open_id ?? d.user_id ?? ''])
   await exec(upsertSql, [userId, 'feishu_token_time', Date.now().toString()])
   await exec(upsertSql, [userId, 'feishu_auth_done', '1'])
 
-  return NextResponse.json({ ok: true, name: d.name ?? '' })
+  // 3. 用 user_access_token 获取用户信息
+  let userName = d.name || ''
+  let userOpenId = d.open_id || d.user_id || ''
+  try {
+    const userInfoRes = await httpsGet(
+      `https://open.feishu.cn/open-apis/authen/v1/user_info`,
+      { Authorization: `Bearer ${d.access_token}` }
+    )
+    if (userInfoRes.code === 0 && userInfoRes.data) {
+      userName = userInfoRes.data.name || userName
+      userOpenId = userInfoRes.data.open_id || userInfoRes.data.user_id || userOpenId
+    }
+  } catch {}
+
+  await exec(upsertSql, [userId, 'feishu_user_name', userName])
+  await exec(upsertSql, [userId, 'feishu_user_id', userOpenId])
+
+  return NextResponse.json({ ok: true, name: userName })
 }
