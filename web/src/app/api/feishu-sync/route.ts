@@ -292,17 +292,9 @@ async function fullSync(userId: string) {
     // 3. Sync chats — limit to 20 per request to stay within Vercel timeout
     // Prioritize chats that haven't been synced yet (last_sync_ts='0')
     const MAX_CHATS_PER_SYNC = 20
-    const unsyncedChats = await query<{ chat_id: string }>(
-      `SELECT chat_id FROM feishu_sync_state WHERE user_id = ? AND last_sync_ts = '0' LIMIT ?`,
-      [userId, MAX_CHATS_PER_SYNC]
-    )
-    const syncedRecently = MAX_CHATS_PER_SYNC - unsyncedChats.length > 0
-      ? await query<{ chat_id: string }>(
-          `SELECT chat_id FROM feishu_sync_state WHERE user_id = ? AND last_sync_ts != '0' ORDER BY last_sync_ts ASC LIMIT ?`,
-          [userId, MAX_CHATS_PER_SYNC - unsyncedChats.length]
-        )
-      : []
-    const chatIdsToSync = new Set([...unsyncedChats.map(r => r.chat_id), ...syncedRecently.map(r => r.chat_id)])
+    // Prioritize recently active chats (sorted by chat list order, which is recency)
+    // The chats array from listChats is already ordered by recency
+    const chatIdsToSync = new Set(chats.slice(0, MAX_CHATS_PER_SYNC).map(c => c.chat_id))
     const chatsToSync = chats.filter(c => chatIdsToSync.has(c.chat_id))
     log(`本次同步 ${chatsToSync.length} / ${chats.length} 个会话`)
 
