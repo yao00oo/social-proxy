@@ -58,12 +58,32 @@ function httpGet(url: string): Promise<{ status: number; body: string }> {
   });
 }
 
+function httpPost(url: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'POST', headers: { 'Content-Length': '0' } }, (res) => {
+      let body = '';
+      res.on('data', (chunk) => (body += chunk));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function login(): Promise<void> {
-  const deviceCode = crypto.randomBytes(16).toString('hex');
+  // Create device code on server
+  const createRes = await httpPost(`${BASE_URL}/api/auth/device`);
+  if (createRes.status !== 200) {
+    error(`Failed to create device code: ${createRes.body}`);
+    return;
+  }
+  const { code: deviceCode } = JSON.parse(createRes.body);
   const authUrl = `${BASE_URL}/auth/device?code=${deviceCode}`;
 
   info('Opening browser for login...');
