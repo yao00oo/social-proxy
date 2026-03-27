@@ -112,6 +112,80 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 3. 增量同步：每个会话记录 `last_sync_ts`，只拉新消息
 4. Vercel 60 秒超时保护：接近超时自动停止，前端自动续传
 5. 支持两种模式：环境变量（共享应用）或用户自建应用
+6. `POST /api/feishu-sync { reset: true }` 清空旧数据重新全量同步
+
+## 飞书 API 字段参考（避免踩坑）
+
+### GET /im/v1/messages — 获取会话历史消息
+
+**sender 对象只有 4 个字段，没有 name：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `sender.id` | string | 发送者 ID（open_id 或 app_id） |
+| `sender.id_type` | string | ID 类型：`open_id`（用户）/ `app_id`（应用） |
+| `sender.sender_type` | string | 发送者类型：`user` / `app` / `anonymous` / `unknown` |
+| `sender.tenant_key` | string | 租户标识 |
+
+**获取发送者姓名的正确方式**：用 `sender.id`（open_id）查 `feishu_users` 表，不要用 `sender.name`（不存在）。
+
+**消息对象完整字段：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `message_id` | string | 消息唯一标识 |
+| `root_id` | string | 话题根消息 ID |
+| `parent_id` | string | 回复的上级消息 ID |
+| `thread_id` | string | 话题 ID |
+| `msg_type` | string | 消息类型：text/post/image/file/audio/video/sticker/interactive 等 |
+| `create_time` | string | 创建时间（毫秒时间戳） |
+| `update_time` | string | 更新时间（毫秒时间戳） |
+| `deleted` | boolean | 是否已撤回 |
+| `updated` | boolean | 是否已编辑 |
+| `chat_id` | string | 所属会话 ID |
+| `body.content` | string | 消息内容（JSON 字符串） |
+| `mentions[].key` | string | @标记序列（如 @_user_3） |
+| `mentions[].id` | string | 被@人的 open_id |
+| `mentions[].name` | string | 被@人的显示名称 |
+
+### GET /im/v1/chats — 获取会话列表
+
+**不包含 p2p 单聊**，只返回群组。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `chat_id` | string | 群组 ID |
+| `name` | string | 群名 |
+| `avatar` | string | 群头像 URL |
+| `description` | string | 群描述 |
+| `owner_id` | string | 群主 ID（机器人群主无返回值） |
+| `external` | boolean | 是否外部群 |
+| `tenant_key` | string | 租户标识 |
+| `chat_status` | string | 状态：`normal` / `dissolved` / `dissolved_save` |
+
+### GET /im/v1/chats/:chat_id — 获取群详情
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `chat_mode` | string | 会话模式：`group`（群组）/ `topic`（话题）/ `p2p`（单聊） |
+| `chat_type` | string | 群类型：`private`（私有）/ `public`（公开） |
+| `user_count` | string | 群内用户数 |
+| `bot_count` | string | 群内机器人数 |
+| 其他字段 | - | 与 list 返回类似，额外有权限配置等 |
+
+### POST /search/v2/message — 搜索消息
+
+可跨会话搜索，**包括 p2p 单聊**。用于发现 p2p 的 chat_id。
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `query` | string | 搜索关键词（必填） |
+| `chat_type` | string | `group_chat` / `p2p_chat` |
+| `from_ids` | string[] | 按发送者 open_id 筛选 |
+| `message_type` | string | `file` / `image` / `media` |
+| `start_time` / `end_time` | string | 时间范围 |
+
+返回 `items: string[]`（message_id 列表），需要再调 `GET /im/v1/messages/:id` 获取消息详情（含 chat_id）。
 
 ## 注意事项
 
