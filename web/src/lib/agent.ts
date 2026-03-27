@@ -242,22 +242,20 @@ function createTools(userId: string): Record<string, any> {
   },
 
   get_new_messages: {
-    description: '获取最近收到的新消息（含每条消息的聊天上下文）。用于了解最近发生了什么、谁需要回复。默认返回最近24小时的消息，可以调大 minutes 参数查看更早的消息。',
+    description: '获取最近收到的消息，按时间倒序。默认返回最近50条，可调大 limit。',
     parameters: z.object({
-      minutes: z.number().optional().describe('时间窗口（分钟），默认1440即24小时。可设更大值如10080(7天)'),
       limit: z.number().optional().describe('返回条数，默认50'),
     }),
-    execute: async ({ minutes, limit }: { minutes?: number; limit?: number }) => {
+    execute: async ({ limit }: { limit?: number }) => {
       const rows = await query<any>(`
         SELECT m.id, m.platform_msg_id as message_id, t.name as thread_name, t.type as thread_type,
           m.sender_name, m.content as incoming_content, m.timestamp as created_at,
           COALESCE(m.is_read, 0) as is_read, m.metadata
         FROM messages m
         JOIN threads t ON m.thread_id = t.id
-        WHERE m.timestamp::timestamp > NOW() - (? || ' minutes')::interval
-          AND m.direction = 'received' AND m.user_id = ?
+        WHERE m.direction = 'received' AND m.user_id = ?
         ORDER BY m.timestamp DESC LIMIT ?
-      `, [minutes ?? 1440, userId, Math.min(limit ?? 50, 100)])
+      `, [userId, Math.min(limit ?? 50, 100)])
 
       // Add recent_history context for each message
       const msgs = await Promise.all(rows.map(async (row: any) => {
