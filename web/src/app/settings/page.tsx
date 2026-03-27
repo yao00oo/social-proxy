@@ -898,6 +898,21 @@ export default function SettingsPage() {
                       )}
                     </div>
                   )}
+
+                  {/* Sync progress log */}
+                  {(feishuSyncing || feishuLog.length > 0) && (
+                    <div className="mt-3 bg-surface rounded-lg p-3 max-h-40 overflow-y-auto">
+                      {feishuLog.map((line, i) => (
+                        <p key={i} className="text-xs text-on-surface-variant font-mono leading-5">{line}</p>
+                      ))}
+                      {feishuSyncing && <p className="text-xs text-teal-600 animate-pulse mt-1">同步中...</p>}
+                    </div>
+                  )}
+                  {feishuResult && !feishuSyncing && (
+                    <p className="mt-2 text-xs text-on-surface-variant">
+                      上次同步：导入 {feishuResult.imported || 0} 条消息
+                    </p>
+                  )}
                 </>
               ) : (
                 /* Not connected: show guided stepper */

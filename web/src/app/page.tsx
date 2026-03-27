@@ -94,6 +94,7 @@ export default function HomePage() {
   const [search, setSearch] = useState('')
   const [newMessages, setNewMessages] = useState<NewMessage[]>([])
   const [stats, setStats] = useState<StatsData | null>(null)
+  const [syncStatus, setSyncStatus] = useState<any>(null)
 
   // Real contact chat state
   const [realMessages, setRealMessages] = useState<Message[]>([])
@@ -288,6 +289,15 @@ export default function HomePage() {
     fetch('/api/stats').then(r => r.json()).then(setStats).catch(console.error)
   }, [status])
 
+  // ---------- Poll sync status ----------
+  useEffect(() => {
+    if (status !== 'authenticated') return
+    const load = () => fetch('/api/sync-status').then(r => r.json()).then(setSyncStatus).catch(() => {})
+    load()
+    const iv = setInterval(load, 5000)
+    return () => clearInterval(iv)
+  }, [status])
+
   // ---------- Load real contact history ----------
   useEffect(() => {
     if (!selectedName || isAiChat) return
@@ -439,6 +449,27 @@ export default function HomePage() {
 
       {/* ===== Column 2: Chat Area ===== */}
       <main className="flex-grow flex flex-col h-full bg-surface-container">
+        {syncStatus && (syncStatus.feishu.running || syncStatus.totals.messages > 0) && (
+          <div className="px-6 py-2 bg-surface-container-low/50 flex items-center gap-3 text-xs">
+            {syncStatus.feishu.running && (
+              <>
+                <div className="w-3 h-3 rounded-full bg-teal-500 animate-pulse" />
+                <span className="text-on-surface-variant">飞书同步中...</span>
+                {syncStatus.feishu.lastResult && (
+                  <span className="text-outline">已导入 {syncStatus.feishu.lastResult.imported} 条</span>
+                )}
+              </>
+            )}
+            {!syncStatus.feishu.running && syncStatus.totals.messages > 0 && (
+              <>
+                <span className="text-outline">{syncStatus.totals.messages} 条消息 · {syncStatus.totals.contacts} 个联系人</span>
+                {syncStatus.feishu.syncedChats > 0 && (
+                  <span className="text-outline">· 飞书 {syncStatus.feishu.syncedChats}/{syncStatus.feishu.totalChats} 个会话</span>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {isAiChat ? (
           /* --- AI Assistant Chat --- */
           <>
