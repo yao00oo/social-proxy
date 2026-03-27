@@ -507,12 +507,13 @@ async function quickSync(userId: string) {
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
           const contactName = chat.chat_name
+          const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
 
           await exec(
-            `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (user_id, source_id) DO NOTHING`,
-            [userId, contactName, direction, msg.content, ts, msg.message_id],
+            [userId, contactName, direction, msg.content, ts, msg.message_id, senderDisplay],
           )
 
           if (!isSelf) {

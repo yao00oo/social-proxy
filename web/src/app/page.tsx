@@ -20,6 +20,7 @@ interface Message {
   direction: 'sent' | 'received'
   content: string
   timestamp: string
+  sender_name?: string
 }
 
 interface NewMessage {
@@ -542,7 +543,7 @@ export default function HomePage() {
                 <div className="flex items-center justify-center py-12 text-outline text-sm">暂无聊天记录</div>
               ) : (
                 realMessages.map((m, i) => (
-                  <HistoryBubble key={i} content={m.content} time={timeStr(m.timestamp)} direction={m.direction} contactName={selectedName!} />
+                  <HistoryBubble key={i} content={m.content} time={timeStr(m.timestamp)} direction={m.direction} contactName={selectedName!} senderName={m.sender_name} />
                 ))
               )}
               <div ref={messagesEndRef} />
@@ -693,14 +694,15 @@ function ContactRow({ contact, selected, preview, hasPending, onClick }: { conta
   )
 }
 
-function HistoryBubble({ content, time, direction, contactName }: { content: string; time: string; direction: 'sent' | 'received'; contactName: string }) {
+function HistoryBubble({ content, time, direction, contactName, senderName }: { content: string; time: string; direction: 'sent' | 'received'; contactName: string; senderName?: string }) {
   const isSent = direction === 'sent'
+  const displayName = isSent ? '我' : (senderName || contactName)
   return (
     <div className={`flex flex-col ${isSent ? 'items-end self-end' : 'items-start'} max-w-[85%]`}>
       <div className={`px-4 py-2.5 rounded-[16px] draft-shadow ${isSent ? 'bg-secondary text-white rounded-br-sm' : 'bg-surface-container-highest text-on-surface rounded-bl-sm'}`}>
         <p className="text-sm leading-relaxed">{content}</p>
       </div>
-      <span className="text-[10px] text-outline mt-1 mx-2">{isSent ? '我' : contactName} · {time}</span>
+      <span className="text-[10px] text-outline mt-1 mx-2">{displayName} · {time}</span>
     </div>
   )
 }

@@ -35,9 +35,9 @@ export async function GET(
 
   // Recent messages
   const messages = await query(`
-    SELECT direction, content, timestamp
+    SELECT direction, content, timestamp, sender_name
     FROM (
-      SELECT direction, content, timestamp FROM messages
+      SELECT direction, content, timestamp, sender_name FROM messages
       WHERE contact_name = ? ORDER BY timestamp DESC LIMIT ?
     ) sub ORDER BY timestamp ASC
   `, [name, limit])

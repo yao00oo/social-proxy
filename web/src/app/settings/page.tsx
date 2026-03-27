@@ -603,28 +603,41 @@ export default function SettingsPage() {
 
   const handleFeishuSync = async () => {
     setFeishuSyncing(true)
-    setFeishuLog([])
+    setFeishuLog(['开始同步...'])
     setFeishuResult(null)
 
-    let totalImported = 0
-    let hasMore = true
+    // Start polling for progress immediately
+    const poll = setInterval(async () => {
+      try {
+        const status = await fetch('/api/feishu-sync').then(r => r.json())
+        if (status.log?.length) setFeishuLog(status.log)
+        if (status.lastResult) setFeishuResult(status.lastResult)
+      } catch {}
+    }, 2000)
 
-    while (hasMore) {
+    // Send sync request (this blocks until done or timeout)
+    try {
       const res = await fetch('/api/feishu-sync', { method: 'POST' }).then(r => r.json())
       const result = res.result || {}
-      totalImported += result.imported || 0
-      setFeishuResult({ ...result, imported: totalImported })
-      setFeishuLog(prev => [...prev, ...(result.errors || []).map((e: string) => `⚠ ${e}`)])
 
+      // If there are remaining chats, auto-continue
       if (result.remaining > 0) {
-        setFeishuLog(prev => [...prev, `已同步 ${totalImported} 条，继续同步剩余 ${result.remaining} 个会话...`])
-      } else {
-        hasMore = false
+        clearInterval(poll)
+        setFeishuLog(prev => [...prev, `已同步 ${result.imported} 条，继续同步剩余 ${result.remaining} 个会话...`])
+        // Recursive call to continue
+        await handleFeishuSync()
+        return
       }
+
+      clearInterval(poll)
+      setFeishuResult(result)
+      setFeishuLog(prev => [...prev, `✅ 同步完成，共导入 ${result.imported || 0} 条消息`])
+    } catch (err: any) {
+      clearInterval(poll)
+      setFeishuLog(prev => [...prev, `❌ 同步出错: ${err.message}`])
     }
 
     setFeishuSyncing(false)
-    setFeishuLog(prev => [...prev, `✅ 同步完成，共导入 ${totalImported} 条消息`])
   }
 
   // ---------- Gmail OAuth ----------
