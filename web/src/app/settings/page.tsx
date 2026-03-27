@@ -40,24 +40,6 @@ const defaultSettings: Settings = {
 
 // ---------- Sub-components ----------
 
-function Section({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className="bg-surface-container-low rounded-2xl ghost-border ambient-shadow">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-6 py-5 cursor-pointer"
-      >
-        <h2 className="text-on-surface font-semibold text-base font-headline">{title}</h2>
-        <span className="material-symbols-outlined text-outline transition-transform" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-          expand_more
-        </span>
-      </button>
-      {open && <div className="px-6 pb-6">{children}</div>}
-    </div>
-  )
-}
-
 function Input({
   label, value, onChange, type = 'text', placeholder = '',
 }: {
@@ -87,42 +69,113 @@ function LogPanel({ log, running, label = '同步中...' }: { log: string[]; run
   )
 }
 
-function PrimaryButton({ onClick, disabled, children }: { onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} disabled={disabled}
-      className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-container text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed">
-      {children}
-    </button>
-  )
-}
+// ---------- Card components ----------
 
-function SecondaryButton({ onClick, disabled, children }: { onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} disabled={disabled}
-      className="px-5 py-2.5 rounded-xl bg-surface-container-high hover:bg-surface-container-highest text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed">
-      {children}
-    </button>
-  )
-}
+function SourceCard({
+  icon,
+  iconClass = 'text-on-surface-variant',
+  title,
+  subtitle,
+  connected,
+  connectedLabel,
+  actionLabel,
+  onAction,
+  disabled,
+  disabledLabel,
+  dashed,
+  children,
+  expanded,
+}: {
+  icon: string
+  iconClass?: string
+  title: string
+  subtitle?: string
+  connected?: boolean
+  connectedLabel?: string
+  actionLabel?: string
+  onAction?: () => void
+  disabled?: boolean
+  disabledLabel?: string
+  dashed?: boolean
+  children?: React.ReactNode
+  expanded?: boolean
+}) {
+  if (dashed) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-1 rounded-[10px] border border-dashed border-outline-variant/40 p-3.5 h-[100px] text-outline">
+        <span className="material-symbols-outlined text-2xl">add</span>
+        <span className="text-xs">{title}</span>
+      </div>
+    )
+  }
 
-function StatusDot({ active, label }: { active: boolean; label: string }) {
+  if (disabled) {
+    return (
+      <div className="bg-surface-container-low opacity-60 outline outline-1 outline-outline-variant/20 rounded-[10px] p-3.5 h-[100px] flex flex-col justify-between">
+        <div className="flex items-start gap-2.5">
+          <span className={`material-symbols-outlined text-xl text-outline`}>{icon}</span>
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-on-surface truncate">{title}</p>
+            {subtitle && <p className="text-xs text-outline mt-0.5 truncate">{subtitle}</p>}
+          </div>
+        </div>
+        <p className="text-xs text-outline">{disabledLabel || '即将支持'}</p>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex items-center gap-2">
-      <span className={`w-2 h-2 rounded-full inline-block ${active ? 'bg-primary-fixed-dim' : 'bg-outline'}`} />
-      <span className={`text-sm ${active ? 'text-primary' : 'text-outline'}`}>{label}</span>
+    <div className={`bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-3.5 h-[100px] flex flex-col justify-between ${onAction && !connected ? 'group cursor-pointer hover:bg-surface-container-low transition-colors' : ''}`}
+      onClick={onAction && !connected ? onAction : undefined}
+    >
+      <div className="flex items-start gap-2.5">
+        <span className={`material-symbols-outlined text-xl ${iconClass}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-on-surface truncate">{title}</p>
+          {subtitle && <p className="text-xs text-on-surface-variant mt-0.5 truncate">{subtitle}</p>}
+        </div>
+      </div>
+      <div className="flex items-center justify-between">
+        {connected ? (
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-teal-500" />
+            <span className="text-xs text-teal-700">{connectedLabel}</span>
+          </div>
+        ) : (
+          actionLabel ? (
+            <button className="text-xs font-medium text-primary hover:text-primary-container transition-colors cursor-pointer">
+              {actionLabel}
+            </button>
+          ) : <span />
+        )}
+      </div>
+      {children}
     </div>
   )
 }
 
-// ---------- Doc Sync Section ----------
+function SectionHeader({ icon, title, badge, badgeColor }: { icon: string; title: string; badge?: string; badgeColor?: string }) {
+  return (
+    <div className="flex items-center gap-2.5 mb-3">
+      <span className="material-symbols-outlined text-xl text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+      <h2 className="text-base font-semibold text-on-surface font-headline">{title}</h2>
+      {badge && (
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+          badgeColor === 'orange' ? 'bg-accent-orange/10 text-accent-orange' :
+          badgeColor === 'green' ? 'bg-teal-50 text-teal-700' :
+          'bg-surface-container-high text-outline'
+        }`}>{badge}</span>
+      )}
+    </div>
+  )
+}
 
-function DocSyncSection() {
+// ---------- Doc Sync Section (state kept internal) ----------
+
+function useDocSync() {
   const [running, setRunning] = useState(false)
   const [log, setLog] = useState<string[]>([])
   const [result, setResult] = useState<any>(null)
-  const logRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [log])
 
   const handleSync = async () => {
     setRunning(true); setLog([]); setResult(null)
@@ -134,22 +187,7 @@ function DocSyncSection() {
     }, 1500)
   }
 
-  return (
-    <Section title="飞书文档同步">
-      <p className="text-on-surface-variant text-sm mb-4">
-        同步飞书云文档内容到本地，需开通 <code className="text-primary font-mono text-xs">drive:drive:readonly</code> 和 <code className="text-primary font-mono text-xs">docx:document:readonly</code> 用户身份权限。
-      </p>
-      <div className="flex items-center gap-3 mb-4">
-        <PrimaryButton onClick={handleSync} disabled={running}>
-          {running ? '同步中...' : '同步文档'}
-        </PrimaryButton>
-        {result && !result.error && (
-          <span className="text-sm text-on-surface-variant">共 <span className="text-primary font-mono font-semibold">{result.synced}</span> 个文档</span>
-        )}
-      </div>
-      <LogPanel log={log} running={running} />
-    </Section>
-  )
+  return { running, log, result, handleSync }
 }
 
 // ---------- Main Settings Page ----------
@@ -186,6 +224,12 @@ export default function SettingsPage() {
   const [emailSyncing, setEmailSyncing] = useState(false)
   const [emailSyncLog, setEmailSyncLog] = useState<string[]>([])
   const [emailSyncResult, setEmailSyncResult] = useState<any>(null)
+
+  // Expanded panels
+  const [expandedCard, setExpandedCard] = useState<string | null>(null)
+
+  // Doc sync
+  const docSync = useDocSync()
 
   // ---------- Fetchers ----------
 
@@ -381,312 +425,513 @@ export default function SettingsPage() {
     }, 1500)
   }
 
+  // ---------- Progress calculation ----------
+  const connectedSources = [
+    importResult !== null,
+    feishuAuthed,
+    gmailAuthed,
+  ].filter(Boolean).length
+  const totalSteps = 3
+
   // ---------- Render ----------
 
   return (
     <main className="h-screen overflow-y-auto bg-surface text-on-surface">
       {/* Header */}
       <header className="border-b border-outline-variant/30 px-6 py-4">
-        <div className="max-w-2xl mx-auto flex items-center gap-4">
-          <Link href="/" className="flex items-center gap-1 text-on-surface-variant hover:text-on-surface transition-colors">
+        <div className="max-w-[720px] mx-auto flex items-center gap-3">
+          <Link href="/" className="flex items-center text-on-surface-variant hover:text-on-surface transition-colors">
             <span className="material-symbols-outlined text-xl">arrow_back</span>
           </Link>
-          <div>
-            <h1 className="text-on-surface font-bold text-lg font-headline">Settings</h1>
-            <p className="text-outline text-xs mt-0.5">数据源配置与同步</p>
-          </div>
+          <span className="text-on-surface-variant text-sm">设置</span>
+          <span className="text-outline text-sm">/</span>
+          <span className="text-on-surface text-sm font-medium">数据源与能力配置</span>
         </div>
       </header>
 
-      <div className="max-w-2xl mx-auto px-6 py-8 space-y-5">
+      <div className="max-w-[720px] mx-auto px-6 py-8">
+        {/* Title */}
+        <div className="mb-6">
+          <h1 className="text-on-surface font-bold text-xl font-headline">数据源与能力配置</h1>
+          <p className="text-outline text-sm mt-1">告诉小林更多，它能帮你做更多</p>
+        </div>
 
-        {/* ── 微信导入 ── */}
-        <Section title="导入微信记录">
-          <div className="mb-5 space-y-3">
-            <p className="text-on-surface-variant text-sm font-medium">如何导出微信聊天记录？</p>
-
-            <details className="group" open>
-              <summary className="cursor-pointer text-sm text-secondary hover:text-secondary/80 transition-colors">
-                方法一：电脑端多选复制（推荐）
-              </summary>
-              <ol className="mt-2 ml-4 text-xs text-on-surface-variant space-y-1.5 list-decimal list-outside">
-                <li>在电脑端微信（Mac / Windows）打开聊天窗口</li>
-                <li>滚动到要导出的起始位置，<strong className="text-on-surface">右键</strong>一条消息 → 点击「多选」</li>
-                <li>勾选需要的消息（可按住 Shift 批量选择）</li>
-                <li>点击底部「合并转发」→ 发送给「<strong className="text-on-surface">文件传输助手</strong>」</li>
-                <li>打开「文件传输助手」→ 点开合并的聊天记录 → <strong className="text-on-surface">全选复制</strong></li>
-                <li>粘贴到文本编辑器（记事本 / TextEdit），保存为 <code className="text-primary font-mono">.txt</code> 文件</li>
-                <li>在下方上传该文件</li>
-              </ol>
-              <div className="mt-2 ml-4 p-2.5 bg-surface border border-outline-variant rounded-xl text-xs text-on-surface-variant">
-                复制出的格式类似：
-                <pre className="text-primary mt-1 whitespace-pre-wrap font-mono">{'张三 2024/09/16 2:51 PM\n今天下午开会吗？\n李四 2024/09/16 2:52 PM\n好的，三点见'}</pre>
+        {/* Progress stepper */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-on-surface-variant">配置进度</span>
+            <span className="text-xs text-on-surface-variant">{connectedSources} / {totalSteps}</span>
+          </div>
+          <div className="w-full h-1.5 bg-surface-container-high rounded-full overflow-hidden">
+            <div className="h-full bg-primary rounded-full transition-all duration-500" style={{ width: `${(connectedSources / totalSteps) * 100}%` }} />
+          </div>
+          <div className="flex justify-between mt-2">
+            {['导入消息', '授权发送', '监听配置'].map((step, i) => (
+              <div key={step} className="flex items-center gap-1.5">
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium ${
+                  i < connectedSources ? 'bg-primary text-on-primary' : 'bg-surface-container-high text-outline'
+                }`}>{i + 1}</div>
+                <span className={`text-xs ${i < connectedSources ? 'text-primary' : 'text-outline'}`}>{step}</span>
               </div>
-            </details>
+            ))}
+          </div>
+        </div>
 
-            <details className="group">
-              <summary className="cursor-pointer text-sm text-secondary hover:text-secondary/80 transition-colors">
-                方法二：手机多选转发到电脑
-              </summary>
-              <ol className="mt-2 ml-4 text-xs text-on-surface-variant space-y-1.5 list-decimal list-outside">
-                <li>手机微信打开聊天 → <strong className="text-on-surface">长按</strong>消息 → 「多选」</li>
-                <li>勾选消息后点击底部「合并转发」→ 发给「<strong className="text-on-surface">文件传输助手</strong>」</li>
-                <li>在电脑端微信打开「文件传输助手」→ 点开合并记录 → 全选复制</li>
-                <li>粘贴到文本编辑器，保存为 <code className="text-primary font-mono">.txt</code> 后上传</li>
-              </ol>
-            </details>
+        {/* ═══ Section 1: 让小林了解你 ═══ */}
+        <div className="mb-8">
+          <SectionHeader icon="psychology" title="让小林了解你" />
+          <div className="grid grid-cols-3 gap-3">
+            {/* WeChat */}
+            <SourceCard
+              icon="chat_bubble"
+              iconClass="text-teal-600"
+              title="微信"
+              subtitle="导入聊天记录"
+              connected={importResult !== null}
+              connectedLabel="已同步历史消息"
+              actionLabel={importing ? '导入中...' : '导入'}
+              onAction={() => fileRef.current?.click()}
+            />
+            <input ref={fileRef} type="file" accept=".txt,.csv" className="hidden" onChange={handleImport} disabled={importing} />
+
+            {/* Feishu */}
+            <SourceCard
+              icon="corporate_fare"
+              iconClass="text-blue-600"
+              title="飞书"
+              subtitle="企业消息同步"
+              connected={feishuAuthed}
+              connectedLabel="企业账号已关联"
+              actionLabel={feishuAuthing ? '等待授权...' : '授权'}
+              onAction={() => {
+                if (feishuAuthed) {
+                  setExpandedCard(expandedCard === 'feishu' ? null : 'feishu')
+                } else {
+                  setExpandedCard('feishu')
+                }
+              }}
+            />
+
+            {/* iMessage */}
+            <SourceCard
+              icon="sms"
+              iconClass="text-green-600"
+              title="iMessage"
+              subtitle="点击导入iCloud记录"
+              actionLabel="导入"
+            />
+
+            {/* WhatsApp */}
+            <SourceCard icon="perm_phone_msg" title="WhatsApp" disabled disabledLabel="即将支持" />
+
+            {/* Telegram */}
+            <SourceCard icon="send" title="Telegram" disabled disabledLabel="即将支持" />
+
+            {/* More */}
+            <SourceCard icon="add" title="更多数据源" dashed />
           </div>
 
-          <div className="mb-4 p-3 bg-surface border border-outline-variant rounded-xl">
-            <p className="text-xs text-on-surface-variant mb-1">支持的文件格式：</p>
-            <div className="flex gap-4 text-xs">
-              <span className="text-primary font-mono">.txt</span>
-              <span className="text-outline">每行 <code>时间 发送者: 消息内容</code></span>
-            </div>
-            <div className="flex gap-4 text-xs">
-              <span className="text-primary font-mono">.csv</span>
-              <span className="text-outline">包含时间、发送者、内容的 CSV</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <label className="cursor-pointer">
-              <span className="inline-block px-5 py-2.5 rounded-xl bg-primary hover:bg-primary-container text-on-primary text-sm font-medium transition-colors">
-                {importing ? '导入中...' : '选择文件上传'}
-              </span>
-              <input ref={fileRef} type="file" accept=".txt,.csv" className="hidden" onChange={handleImport} disabled={importing} />
-            </label>
-            {importResult && (
-              <span className="text-sm text-on-surface-variant">
-                成功 <span className="text-primary font-mono font-semibold">{importResult.imported}</span> 条，
-                跳过 <span className="text-outline font-mono">{importResult.skipped}</span> 条
-              </span>
-            )}
-          </div>
-        </Section>
-
-        {/* ── 飞书聊天同步 ── */}
-        <Section title="飞书聊天同步">
-          <p className="text-on-surface-variant text-sm mb-2">
-            通过飞书 OAuth 授权，自动拉取聊天记录、通讯录、云文档。
-            需要先在 <a href="https://open.feishu.cn" target="_blank" className="text-secondary underline">open.feishu.cn</a> 创建自建应用，开通以下权限：
-          </p>
-          <div className="bg-surface-container rounded-xl p-3 mb-4 text-xs font-mono text-on-surface-variant space-y-1">
-            <p className="text-outline mb-1">应用身份权限（在开发者后台「权限管理」添加）：</p>
-            <p>im:chat:readonly <span className="text-outline">— 获取会话列表</span></p>
-            <p>im:message:readonly <span className="text-outline">— 读取消息</span></p>
-            <p>im:message.group_msg:get_as_user <span className="text-outline">— 读取群消息</span></p>
-            <p>contact:contact:readonly <span className="text-outline">— 读取通讯录（手机、邮箱）</span></p>
-            <p>contact:user.employee:readonly <span className="text-outline">— 获取企业邮箱</span></p>
-            <p>drive:drive:readonly <span className="text-outline">— 读取云文档</span></p>
-            <p>docx:document:readonly <span className="text-outline">— 读取文档内容</span></p>
-            <p>approval:approval:readonly <span className="text-outline">— 读取审批</span></p>
-            <p className="text-outline mt-2">通讯录权限范围设为「全部员工」</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <Input label="App ID" value={settings.feishu_app_id} onChange={(v) => setSettings({ ...settings, feishu_app_id: v })} placeholder="cli_xxxxxxxxx" />
-            <Input label="App Secret" type="password" value={settings.feishu_app_secret} onChange={(v) => setSettings({ ...settings, feishu_app_secret: v })} placeholder="••••••••" />
-          </div>
-
-          <div className="flex items-center gap-3 mb-4 flex-wrap">
-            <StatusDot active={feishuAuthed} label={feishuAuthed ? `已授权：${feishuUserName}` : '未授权'} />
-            <SecondaryButton onClick={handleFeishuAuth} disabled={feishuAuthing}>
-              {feishuAuthing ? '等待授权...' : feishuAuthed ? '重新授权' : '授权飞书账号'}
-            </SecondaryButton>
-            {feishuAuthed && (
-              <PrimaryButton onClick={handleFeishuSync} disabled={feishuSyncing}>
-                {feishuSyncing ? '同步中...' : '立即同步'}
-              </PrimaryButton>
-            )}
-          </div>
-
-          {/* Auto sync */}
-          {feishuAuthed && (
-            <div className="flex items-center gap-3 mb-4 flex-wrap">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={autoSync}
-                  onChange={async (e) => {
-                    const enabled = e.target.checked
-                    setAutoSync(enabled)
-                    await fetch('/api/feishu-sync', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ autoSyncSeconds: enabled ? autoSyncSeconds : 0 }),
-                    })
-                  }}
-                  className="accent-primary w-4 h-4"
-                />
-                <span className="text-sm text-on-surface">自动同步</span>
-              </label>
-              <select
-                value={autoSyncSeconds}
-                onChange={async (e) => {
-                  const secs = Number(e.target.value)
-                  setAutoSyncSeconds(secs)
-                  if (autoSync) {
-                    await fetch('/api/feishu-sync', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ autoSyncSeconds: secs }),
-                    })
-                  }
-                }}
-                disabled={!autoSync}
-                className="bg-surface border border-outline-variant rounded-xl px-3 py-2 text-on-surface text-sm focus:outline-none disabled:opacity-40"
-              >
-                <option value={15}>每 15 秒（快速）</option>
-                <option value={30}>每 30 秒</option>
-                <option value={60}>每 1 分钟</option>
-                <option value={300}>每 5 分钟</option>
-                <option value={600}>每 10 分钟</option>
-              </select>
-              {autoSync && <span className="text-xs text-primary">● 自动同步运行中</span>}
+          {/* WeChat import result */}
+          {importResult && (
+            <div className="mt-3 p-3 bg-surface-container-low rounded-xl text-sm text-on-surface-variant">
+              导入完成：成功 <span className="text-primary font-mono font-semibold">{importResult.imported}</span> 条，
+              跳过 <span className="text-outline font-mono">{importResult.skipped}</span> 条
             </div>
           )}
 
-          {/* Auth URL fallback */}
-          {feishuAuthUrl && !feishuAuthed && (
-            <div className="mb-4 p-3 bg-accent-orange/5 border border-accent-orange/20 rounded-xl">
-              <p className="text-accent-orange text-xs mb-2">点击下方链接完成飞书授权：</p>
-              <a href={feishuAuthUrl} target="_blank" rel="noreferrer"
-                className="text-secondary text-sm underline break-all"
-                onClick={() => setFeishuAuthUrl('')}>
-                点击授权飞书账号
-              </a>
-            </div>
-          )}
+          {/* Feishu expanded panel */}
+          {expandedCard === 'feishu' && (
+            <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-on-surface">飞书授权配置</p>
+                <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="App ID" value={settings.feishu_app_id} onChange={(v) => setSettings({ ...settings, feishu_app_id: v })} placeholder="cli_xxxxxxxxx" />
+                <Input label="App Secret" type="password" value={settings.feishu_app_secret} onChange={(v) => setSettings({ ...settings, feishu_app_secret: v })} placeholder="••••••••" />
+              </div>
 
-          {/* Sync log */}
-          {(feishuLog.length > 0 || feishuResult) && (
-            <div>
-              <LogPanel log={feishuLog} running={feishuSyncing} />
-              {feishuResult && !feishuResult.error && (
-                <p className="text-sm text-on-surface-variant mt-2">
-                  同步完成：导入 <span className="text-primary font-mono font-semibold">{feishuResult.imported}</span> 条，
-                  处理 <span className="font-mono">{feishuResult.chats}</span> 个会话
-                  {feishuResult.errors?.length > 0 && (
-                    <span className="text-accent-orange">，{feishuResult.errors.length} 个错误</span>
+              <div className="flex items-center gap-3 flex-wrap">
+                {feishuAuthed ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-teal-500" />
+                    <span className="text-sm text-teal-700">已授权：{feishuUserName}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-slate-300" />
+                    <span className="text-sm text-outline">未授权</span>
+                  </div>
+                )}
+                <button onClick={handleFeishuAuth} disabled={feishuAuthing}
+                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
+                  {feishuAuthing ? '等待授权...' : feishuAuthed ? '重新授权' : '授权飞书账号'}
+                </button>
+                {feishuAuthed && (
+                  <button onClick={handleFeishuSync} disabled={feishuSyncing}
+                    className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-surface-container-highest">
+                    {feishuSyncing ? '同步中...' : '立即同步'}
+                  </button>
+                )}
+              </div>
+
+              {/* Auto sync */}
+              {feishuAuthed && (
+                <div className="flex items-center gap-3 flex-wrap">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoSync}
+                      onChange={async (e) => {
+                        const enabled = e.target.checked
+                        setAutoSync(enabled)
+                        await fetch('/api/feishu-sync', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ autoSyncSeconds: enabled ? autoSyncSeconds : 0 }),
+                        })
+                      }}
+                      className="accent-primary w-4 h-4"
+                    />
+                    <span className="text-sm text-on-surface">自动同步</span>
+                  </label>
+                  <select
+                    value={autoSyncSeconds}
+                    onChange={async (e) => {
+                      const secs = Number(e.target.value)
+                      setAutoSyncSeconds(secs)
+                      if (autoSync) {
+                        await fetch('/api/feishu-sync', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ autoSyncSeconds: secs }),
+                        })
+                      }
+                    }}
+                    disabled={!autoSync}
+                    className="bg-surface border border-outline-variant rounded-xl px-3 py-2 text-on-surface text-sm focus:outline-none disabled:opacity-40"
+                  >
+                    <option value={15}>每 15 秒</option>
+                    <option value={30}>每 30 秒</option>
+                    <option value={60}>每 1 分钟</option>
+                    <option value={300}>每 5 分钟</option>
+                    <option value={600}>每 10 分钟</option>
+                  </select>
+                  {autoSync && <span className="text-xs text-primary">● 运行中</span>}
+                </div>
+              )}
+
+              {/* Auth URL fallback */}
+              {feishuAuthUrl && !feishuAuthed && (
+                <div className="p-3 bg-accent-orange/5 border border-accent-orange/20 rounded-xl">
+                  <p className="text-accent-orange text-xs mb-2">点击下方链接完成飞书授权：</p>
+                  <a href={feishuAuthUrl} target="_blank" rel="noreferrer"
+                    className="text-secondary text-sm underline break-all"
+                    onClick={() => setFeishuAuthUrl('')}>
+                    点击授权飞书账号
+                  </a>
+                </div>
+              )}
+
+              {/* Sync log */}
+              {(feishuLog.length > 0 || feishuResult) && (
+                <div>
+                  <LogPanel log={feishuLog} running={feishuSyncing} />
+                  {feishuResult && !feishuResult.error && (
+                    <p className="text-sm text-on-surface-variant mt-2">
+                      同步完成：导入 <span className="text-primary font-mono font-semibold">{feishuResult.imported}</span> 条，
+                      处理 <span className="font-mono">{feishuResult.chats}</span> 个会话
+                      {feishuResult.errors?.length > 0 && (
+                        <span className="text-accent-orange">，{feishuResult.errors.length} 个错误</span>
+                      )}
+                    </p>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ═══ Section 2: 让小林帮你发送消息 ═══ */}
+        <div className="mb-8">
+          <SectionHeader
+            icon="send"
+            title="让小林帮你发送消息"
+            badge={(!gmailAuthed || !feishuAuthed) ? '需要配置' : undefined}
+            badgeColor="orange"
+          />
+          <div className="grid grid-cols-3 gap-3">
+            {/* Gmail */}
+            <SourceCard
+              icon="mail"
+              iconClass="text-error"
+              title="Gmail"
+              subtitle="OAuth 授权发送"
+              connected={gmailAuthed}
+              connectedLabel={gmailEmail || '已授权'}
+              actionLabel="授权"
+              onAction={() => setExpandedCard(expandedCard === 'gmail' ? null : 'gmail')}
+            />
+
+            {/* Feishu Bot */}
+            <SourceCard
+              icon="corporate_fare"
+              iconClass="text-blue-600"
+              title="飞书 Bot"
+              subtitle="机器人消息发送"
+              connected={feishuAuthed}
+              connectedLabel="机器人权限已开启"
+            />
+
+            {/* SMTP */}
+            <SourceCard
+              icon="settings_suggest"
+              iconClass="text-on-surface-variant"
+              title="SMTP"
+              subtitle="自定义邮件发送"
+              connected={!!settings.smtp_host && !!settings.smtp_user}
+              connectedLabel="已配置"
+              actionLabel="配置"
+              onAction={() => setExpandedCard(expandedCard === 'smtp' ? null : 'smtp')}
+            />
+          </div>
+
+          {/* Gmail expanded panel */}
+          {expandedCard === 'gmail' && (
+            <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-on-surface">Gmail 授权配置</p>
+                <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              </div>
+              <p className="text-outline text-xs">
+                在{' '}
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" className="text-secondary underline">Google Cloud Console</a>
+                {' '}创建 OAuth Client ID，回调地址填{' '}
+                <code className="text-primary font-mono text-xs">http://localhost:3000/api/gmail-callback</code>
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Gmail Client ID" value={settings.gmail_client_id} onChange={(v) => setSettings({ ...settings, gmail_client_id: v })} placeholder="xxx.apps.googleusercontent.com" />
+                <Input label="Client Secret" type="password" value={settings.gmail_client_secret} onChange={(v) => setSettings({ ...settings, gmail_client_secret: v })} placeholder="GOCSPX-xxx" />
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                {gmailAuthed ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-teal-500" />
+                    <span className="text-sm text-teal-700">{gmailEmail}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-slate-300" />
+                    <span className="text-sm text-outline">未授权</span>
+                  </div>
+                )}
+                <button onClick={handleGmailAuth} disabled={!settings.gmail_client_id}
+                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
+                  {gmailAuthed ? '重新授权' : '授权 Gmail'}
+                </button>
+                {gmailAuthed && (
+                  <button onClick={handleGmailSync} disabled={gmailSyncing}
+                    className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-surface-container-highest">
+                    {gmailSyncing ? '同步中...' : '同步邮件'}
+                  </button>
+                )}
+                {gmailSyncResult && !gmailSyncResult.error && (
+                  <span className="text-sm text-on-surface-variant">导入 <span className="text-primary font-mono font-semibold">{gmailSyncResult.imported}</span> 封</span>
+                )}
+              </div>
+              {gmailSyncLog.length > 0 && (
+                <LogPanel log={gmailSyncLog} running={gmailSyncing} />
+              )}
+
+              {/* Permission mode */}
+              <div>
+                <p className="text-on-surface-variant text-xs mb-2 font-medium">发送权限</p>
+                <div className="flex gap-4">
+                  {[
+                    { value: 'suggest', label: '仅建议，需确认', desc: '安全' },
+                    { value: 'auto', label: '直接发送', desc: '自动' },
+                  ].map((opt) => (
+                    <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
+                      <input type="radio" name="permission_mode" value={opt.value}
+                        checked={settings.permission_mode === opt.value}
+                        onChange={() => setSettings({ ...settings, permission_mode: opt.value })}
+                        className="accent-primary"
+                      />
+                      <span className="text-sm text-on-surface">{opt.label}</span>
+                      <span className="text-xs text-outline">({opt.desc})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* SMTP expanded panel */}
+          {expandedCard === 'smtp' && (
+            <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-on-surface">SMTP 配置</p>
+                <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="SMTP Host" value={settings.smtp_host} onChange={(v) => setSettings({ ...settings, smtp_host: v })} placeholder="smtp.gmail.com" />
+                <Input label="端口" value={settings.smtp_port} onChange={(v) => setSettings({ ...settings, smtp_port: v })} placeholder="587" />
+                <Input label="邮箱账号" value={settings.smtp_user} onChange={(v) => setSettings({ ...settings, smtp_user: v })} placeholder="you@gmail.com" />
+                <Input label="密码 / App Password" type="password" value={settings.smtp_pass} onChange={(v) => setSettings({ ...settings, smtp_pass: v })} placeholder="••••••••" />
+                <div className="col-span-2">
+                  <Input label="发件人名字" value={settings.smtp_from_name} onChange={(v) => setSettings({ ...settings, smtp_from_name: v })} placeholder="张三" />
+                </div>
+              </div>
+              <button onClick={saveSettings} disabled={settingsSaving}
+                className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
+                {settingsSaved ? '已保存' : settingsSaving ? '保存中...' : '保存配置'}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ═══ Section 3: 让小林监听新消息 ═══ */}
+        <div className="mb-8">
+          <SectionHeader
+            icon="notifications_active"
+            title="让小林监听新消息"
+            badge={feishuAuthed ? `${[feishuAuthed, gmailAuthed].filter(Boolean).length} 个运行中` : '未配置'}
+            badgeColor={feishuAuthed ? 'green' : undefined}
+          />
+          <div className="grid grid-cols-3 gap-3">
+            {/* Gmail IMAP */}
+            <SourceCard
+              icon="sync"
+              iconClass="text-on-surface-variant"
+              title="Gmail IMAP"
+              subtitle="收件箱监听"
+              connected={gmailAuthed}
+              connectedLabel="同步运行中"
+              actionLabel="配置"
+              onAction={() => setExpandedCard(expandedCard === 'imap' ? null : 'imap')}
+            />
+
+            {/* Feishu Event */}
+            <SourceCard
+              icon="webhook"
+              iconClass="text-blue-600"
+              title="飞书 Event"
+              subtitle="实时事件推送"
+              connected={feishuAuthed}
+              connectedLabel="实时同步中"
+            />
+
+            {/* Slack */}
+            <SourceCard icon="tag" title="Slack" disabled disabledLabel="即将支持" />
+          </div>
+
+          {/* IMAP expanded panel */}
+          {expandedCard === 'imap' && (
+            <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-on-surface">IMAP 收件同步</p>
+                <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              </div>
+              <p className="text-outline text-xs">
+                同步收件箱和已发送邮件到本地。不填则自动从 SMTP 推导（smtp.→imap.）。
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="IMAP Host" value={settings.imap_host} onChange={(v) => setSettings({ ...settings, imap_host: v })} placeholder="imap.gmail.com（可留空）" />
+                <Input label="端口" value={settings.imap_port} onChange={(v) => setSettings({ ...settings, imap_port: v })} placeholder="993" />
+                <Input label="邮箱账号" value={settings.imap_user} onChange={(v) => setSettings({ ...settings, imap_user: v })} placeholder="同 SMTP（可留空）" />
+                <Input label="密码 / App Password" type="password" value={settings.imap_pass} onChange={(v) => setSettings({ ...settings, imap_pass: v })} placeholder="同 SMTP（可留空）" />
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={saveSettings} disabled={settingsSaving}
+                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
+                  {settingsSaved ? '已保存' : settingsSaving ? '保存中...' : '保存配置'}
+                </button>
+                <button onClick={handleEmailSync} disabled={emailSyncing}
+                  className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-surface-container-highest">
+                  {emailSyncing ? '同步中...' : '同步邮件'}
+                </button>
+                {emailSyncResult && !emailSyncResult.error && (
+                  <span className="text-sm text-on-surface-variant">
+                    收件 <span className="text-primary font-mono font-semibold">{emailSyncResult.inbox}</span>，
+                    已发送 <span className="text-primary font-mono font-semibold">{emailSyncResult.sent}</span>
+                  </span>
+                )}
+              </div>
+              {emailSyncLog.length > 0 && (
+                <LogPanel log={emailSyncLog} running={emailSyncing} />
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ═══ Section 4: 让小林读取你的文件 ═══ */}
+        <div className="mb-8">
+          <SectionHeader
+            icon="folder_open"
+            title="让小林读取你的文件（可选）"
+            badge="可选"
+          />
+          <div className="grid grid-cols-3 gap-3">
+            {/* 多维表格/文档 */}
+            <SourceCard
+              icon="description"
+              iconClass="text-blue-600"
+              title="多维表格/文档"
+              subtitle="飞书云文档同步"
+              connected={docSync.result !== null && !docSync.result?.error}
+              connectedLabel={docSync.result ? `${docSync.result.synced} 个文档` : undefined}
+              actionLabel={docSync.running ? '同步中...' : docSync.result ? '重新同步' : '同步'}
+              onAction={docSync.handleSync}
+            />
+
+            {/* 企业通讯录 */}
+            <SourceCard
+              icon="groups"
+              iconClass="text-on-surface-variant"
+              title="企业通讯录"
+              subtitle="组织架构同步"
+              connected={feishuAuthed}
+              connectedLabel="通过飞书同步"
+            />
+
+            {/* Notion */}
+            <SourceCard icon="edit_note" title="Notion" disabled disabledLabel="即将支持" />
+          </div>
+
+          {/* Doc sync log */}
+          {(docSync.log.length > 0 || (docSync.result && !docSync.result.error)) && (
+            <div className="mt-3">
+              <LogPanel log={docSync.log} running={docSync.running} />
+              {docSync.result && !docSync.result.error && (
+                <p className="text-sm text-on-surface-variant mt-2">
+                  共同步 <span className="text-primary font-mono font-semibold">{docSync.result.synced}</span> 个文档
                 </p>
               )}
             </div>
           )}
-        </Section>
+        </div>
 
-        {/* ── 飞书文档同步 ── */}
-        <DocSyncSection />
+        {/* Spacer for footer */}
+        <div className="h-20" />
+      </div>
 
-        {/* ── 邮件配置 ── */}
-        <Section title="邮件配置">
-          {/* Gmail OAuth */}
-          <p className="text-on-surface-variant text-xs mb-2 font-medium">Gmail（推荐，OAuth 授权）</p>
-          <p className="text-outline text-xs mb-3">
-            一键授权后自动同步收件箱和已发送邮件。需先在{' '}
-            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" className="text-secondary underline">Google Cloud Console</a>
-            {' '}创建 OAuth Client ID（类型选 Web application，回调地址填{' '}
-            <code className="text-primary font-mono text-xs">http://localhost:3000/api/gmail-callback</code>），并启用 Gmail API。
-          </p>
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <Input label="Gmail Client ID" value={settings.gmail_client_id} onChange={(v) => setSettings({ ...settings, gmail_client_id: v })} placeholder="xxx.apps.googleusercontent.com" />
-            <Input label="Client Secret" type="password" value={settings.gmail_client_secret} onChange={(v) => setSettings({ ...settings, gmail_client_secret: v })} placeholder="GOCSPX-xxx" />
-          </div>
-          <div className="flex items-center gap-3 mb-4 flex-wrap">
-            <PrimaryButton onClick={saveSettings} disabled={settingsSaving}>
-              {settingsSaved ? '已保存' : '保存'}
-            </PrimaryButton>
-            <StatusDot active={gmailAuthed} label={gmailAuthed ? gmailEmail : '未授权'} />
-            {!gmailAuthed ? (
-              <SecondaryButton onClick={handleGmailAuth} disabled={!settings.gmail_client_id}>
-                授权 Gmail
-              </SecondaryButton>
-            ) : (
-              <>
-                <PrimaryButton onClick={handleGmailSync} disabled={gmailSyncing}>
-                  {gmailSyncing ? '同步中...' : '同步邮件'}
-                </PrimaryButton>
-                {gmailSyncResult && !gmailSyncResult.error && (
-                  <span className="text-sm text-on-surface-variant">导入 <span className="text-primary font-mono font-semibold">{gmailSyncResult.imported}</span> 封</span>
-                )}
-              </>
-            )}
-          </div>
-          {gmailSyncLog.length > 0 && (
-            <div className="mb-5">
-              <LogPanel log={gmailSyncLog} running={gmailSyncing} />
-            </div>
-          )}
-
-          <hr className="border-outline-variant/30 my-5" />
-
-          {/* Permission mode */}
-          <div className="mb-5">
-            <p className="text-on-surface-variant text-xs mb-2 font-medium">发送权限</p>
-            <div className="flex gap-4">
-              {[
-                { value: 'suggest', label: '仅建议，需确认', desc: '安全' },
-                { value: 'auto', label: '直接发送', desc: '自动' },
-              ].map((opt) => (
-                <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-                  <input type="radio" name="permission_mode" value={opt.value}
-                    checked={settings.permission_mode === opt.value}
-                    onChange={() => setSettings({ ...settings, permission_mode: opt.value })}
-                    className="accent-primary"
-                  />
-                  <span className="text-sm text-on-surface">{opt.label}</span>
-                  <span className="text-xs text-outline">({opt.desc})</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* SMTP */}
-          <p className="text-on-surface-variant text-xs mb-2 font-medium">SMTP（发件）</p>
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            <Input label="SMTP Host" value={settings.smtp_host} onChange={(v) => setSettings({ ...settings, smtp_host: v })} placeholder="smtp.gmail.com" />
-            <Input label="端口" value={settings.smtp_port} onChange={(v) => setSettings({ ...settings, smtp_port: v })} placeholder="587" />
-            <Input label="邮箱账号" value={settings.smtp_user} onChange={(v) => setSettings({ ...settings, smtp_user: v })} placeholder="you@gmail.com" />
-            <Input label="密码 / App Password" type="password" value={settings.smtp_pass} onChange={(v) => setSettings({ ...settings, smtp_pass: v })} placeholder="••••••••" />
-            <div className="col-span-2">
-              <Input label="发件人名字" value={settings.smtp_from_name} onChange={(v) => setSettings({ ...settings, smtp_from_name: v })} placeholder="张三" />
-            </div>
-          </div>
-
-          {/* IMAP */}
-          <p className="text-on-surface-variant text-xs mb-2 font-medium">IMAP（收件同步）</p>
-          <p className="text-outline text-xs mb-3">
-            同步收件箱和已发送邮件到本地，作为联系人沟通记录。不填则自动从 SMTP 推导（smtp.→imap.）。
-          </p>
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            <Input label="IMAP Host" value={settings.imap_host} onChange={(v) => setSettings({ ...settings, imap_host: v })} placeholder="imap.gmail.com（可留空自动推导）" />
-            <Input label="端口" value={settings.imap_port} onChange={(v) => setSettings({ ...settings, imap_port: v })} placeholder="993" />
-            <Input label="邮箱账号" value={settings.imap_user} onChange={(v) => setSettings({ ...settings, imap_user: v })} placeholder="同 SMTP（可留空）" />
-            <Input label="密码 / App Password" type="password" value={settings.imap_pass} onChange={(v) => setSettings({ ...settings, imap_pass: v })} placeholder="同 SMTP（可留空）" />
-          </div>
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <PrimaryButton onClick={saveSettings} disabled={settingsSaving}>
-              {settingsSaved ? '已保存' : settingsSaving ? '保存中...' : '保存配置'}
-            </PrimaryButton>
-            <SecondaryButton onClick={handleEmailSync} disabled={emailSyncing}>
-              {emailSyncing ? '同步中...' : '同步邮件'}
-            </SecondaryButton>
-            {emailSyncResult && !emailSyncResult.error && (
-              <span className="text-sm text-on-surface-variant">
-                收件 <span className="text-primary font-mono font-semibold">{emailSyncResult.inbox}</span>，
-                已发送 <span className="text-primary font-mono font-semibold">{emailSyncResult.sent}</span>
-              </span>
-            )}
-          </div>
-          {emailSyncLog.length > 0 && (
-            <div className="mt-4">
-              <LogPanel log={emailSyncLog} running={emailSyncing} />
-            </div>
-          )}
-        </Section>
-
+      {/* Footer Action Bar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-primary-container">
+        <div className="max-w-[720px] mx-auto px-6 py-4 flex items-center justify-between">
+          <span className="text-on-primary-container text-sm font-medium">准备好了吗？</span>
+          <Link href="/"
+            className="px-5 py-2.5 rounded-xl bg-primary text-on-primary text-sm font-medium hover:opacity-90 transition-opacity">
+            开始对话
+          </Link>
+        </div>
       </div>
     </main>
   )
