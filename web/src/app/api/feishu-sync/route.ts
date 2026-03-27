@@ -266,7 +266,9 @@ async function fullSync(userId: string) {
     if (syncLog.length > 200) syncLog = syncLog.slice(-100)
   }
 
-  const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[] }
+  const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[], done: false, remaining: 0 }
+  const startTime = Date.now()
+  const TIMEOUT_MS = 50000 // stop 10s before Vercel 60s limit
 
   try {
     let userToken = await ensureValidToken(userId)
@@ -289,30 +291,32 @@ async function fullSync(userId: string) {
       )
     }
 
-    // 3. Sync chats — limit to 20 per request to stay within Vercel timeout
-    // Prioritize chats that haven't been synced yet (last_sync_ts='0')
-    const MAX_CHATS_PER_SYNC = 20
-    // Prioritize recently active chats (sorted by chat list order, which is recency)
-    // The chats array from listChats is already ordered by recency
-    const chatIdsToSync = new Set(chats.slice(0, MAX_CHATS_PER_SYNC).map(c => c.chat_id))
-    const chatsToSync = chats.filter(c => chatIdsToSync.has(c.chat_id))
-    log(`本次同步 ${chatsToSync.length} / ${chats.length} 个会话`)
+    // 3. Sync all chats (ordered by recency from API)
 
-    for (const chat of chatsToSync) {
+    let chatIndex = 0
+    for (const chat of chats) {
+      // Check timeout — stop early if approaching Vercel limit
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        result.remaining = chats.length - chatIndex
+        log(`⏱ 接近超时，已同步 ${chatIndex} 个会话，剩余 ${result.remaining} 个，请再次点击同步继续`)
+        break
+      }
+      chatIndex++
+
       const stateRow = await queryOne<{ last_sync_ts: string }>(
         `SELECT last_sync_ts FROM feishu_sync_state WHERE user_id = ? AND chat_id = ?`,
         [userId, chat.chat_id],
       )
 
       const lastTs = stateRow?.last_sync_ts || '0'
-      const startTime = lastTs !== '0'
+      const msgStartTime = lastTs !== '0'
         ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
         : undefined
 
       log(`  同步: ${chat.name} (从 ${lastTs === '0' ? '最早' : new Date(parseInt(lastTs)).toLocaleString()})`)
 
       try {
-        const msgs = await listMessages(userToken, chat.chat_id, startTime)
+        const msgs = await listMessages(userToken, chat.chat_id, msgStartTime)
         if (msgs.length === 0) {
           log(`    -> 无新消息`)
           continue
@@ -380,7 +384,7 @@ async function fullSync(userId: string) {
           try {
             userToken = await ensureValidToken(userId)
             // Retry this chat
-            const retryMsgs = await listMessages(userToken, chat.chat_id, startTime)
+            const retryMsgs = await listMessages(userToken, chat.chat_id, msgStartTime)
             let retryTs = lastTs
             let retryImported = 0
             for (const msg of retryMsgs) {
@@ -445,6 +449,7 @@ async function fullSync(userId: string) {
     result.errors.push(err.message)
   }
 
+  if (!result.remaining) result.done = true
   lastResult = result
   syncRunning = false
 }

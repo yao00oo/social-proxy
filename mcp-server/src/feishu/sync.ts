@@ -74,8 +74,8 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
 
   // 3. 逐个会话同步
   const insertMessage = db.prepare(`
-    INSERT OR IGNORE INTO messages(contact_name, direction, content, timestamp, source_id)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO messages(contact_name, direction, content, timestamp, source_id, sender_name)
+    VALUES (?, ?, ?, ?, ?, ?)
   `)
 
   const upsertContact = db.prepare(`
@@ -128,12 +128,13 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
 
+          const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
           // p2p 里自己发的消息不作为联系人
           if (chat.chat_type === 'p2p' && isSelf) {
-            insertMessage.run(chat.name, direction, msg.content, ts, msg.message_id)
+            insertMessage.run(chat.name, direction, msg.content, ts, msg.message_id, senderDisplay)
           } else {
             const contactName = chat.chat_type === 'p2p' ? msg.sender_name : chat.name
-            insertMessage.run(contactName, direction, msg.content, ts, msg.message_id)
+            insertMessage.run(contactName, direction, msg.content, ts, msg.message_id, senderDisplay)
             if (!isSelf) {
             upsertContact.run(contactName, msg.sender_id || null, ts)
             // 记录发消息人的姓名 → open_id（用于精确查找个人）
@@ -170,7 +171,8 @@ export async function syncFeishu(onProgress?: (msg: string) => void): Promise<Sy
               const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
               const direction = isSelf ? 'sent' : 'received'
               const contactName = chat.chat_type === 'p2p' && isSelf ? chat.name : (chat.chat_type === 'p2p' ? msg.sender_name : chat.name)
-              insertMessage.run(contactName, direction, msg.content, ts, msg.message_id)
+              const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
+              insertMessage.run(contactName, direction, msg.content, ts, msg.message_id, senderDisplay)
               if (!isSelf) {
                 upsertContact.run(contactName, msg.sender_id || null, ts)
                 if (msg.sender_id && msg.sender_name && !msg.sender_name.startsWith('ou_')) {
@@ -273,8 +275,8 @@ export async function quickSync(): Promise<{ imported: number; errors: number }>
   if (activeChats.length === 0) return { imported: 0, errors: 0 }
 
   const insertMessage = db.prepare(`
-    INSERT OR IGNORE INTO messages(contact_name, direction, content, timestamp, source_id)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO messages(contact_name, direction, content, timestamp, source_id, sender_name)
+    VALUES (?, ?, ?, ?, ?, ?)
   `)
   const upsertContact = db.prepare(`
     INSERT INTO contacts(name, email, last_contact_at, message_count)
@@ -330,8 +332,9 @@ export async function quickSync(): Promise<{ imported: number; errors: number }>
           const direction = isSelf ? 'sent' : 'received'
           // p2p 聊天用 chat_name（即对方姓名），比 sender_name 更可靠
           const contactName = chat.chat_name
+          const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
           const content = msg.image_key ? `[图片:${msg.image_key}]` : msg.content
-          const result = insertMessage.run(contactName, direction, content, ts, msg.message_id)
+          const result = insertMessage.run(contactName, direction, content, ts, msg.message_id, senderDisplay)
           if (msg.image_key && result.changes > 0) {
             toDownload.push({ messageId: msg.message_id, imageKey: msg.image_key, sourceId: msg.message_id })
           }

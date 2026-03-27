@@ -29,7 +29,8 @@ function initSchema(db: Database.Database) {
       direction   TEXT NOT NULL CHECK(direction IN ('sent', 'received')),
       content     TEXT NOT NULL,
       timestamp   TEXT NOT NULL,
-      source_id   TEXT
+      source_id   TEXT,
+      sender_name TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_messages_contact  ON messages(contact_name);
@@ -106,6 +107,12 @@ function initSchema(db: Database.Database) {
 }
 
 function migrate(db: Database.Database) {
+  // 给已有的 messages 表加 sender_name 列
+  const msgCols = db.prepare(`PRAGMA table_info(messages)`).all() as { name: string }[]
+  if (!msgCols.map(c => c.name).includes('sender_name')) {
+    db.exec(`ALTER TABLE messages ADD COLUMN sender_name TEXT`)
+  }
+
   // 给已有的 feishu_users 表加 email/phone 列
   const cols = db.prepare(`PRAGMA table_info(feishu_users)`).all() as { name: string }[]
   const colNames = cols.map(c => c.name)

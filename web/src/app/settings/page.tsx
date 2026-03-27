@@ -605,16 +605,26 @@ export default function SettingsPage() {
     setFeishuSyncing(true)
     setFeishuLog([])
     setFeishuResult(null)
-    await fetch('/api/feishu-sync', { method: 'POST' })
-    const poll = setInterval(async () => {
-      const status = await fetch('/api/feishu-sync').then(r => r.json())
-      setFeishuLog(status.log || [])
-      if (!status.running) {
-        clearInterval(poll)
-        setFeishuSyncing(false)
-        setFeishuResult(status.lastResult)
+
+    let totalImported = 0
+    let hasMore = true
+
+    while (hasMore) {
+      const res = await fetch('/api/feishu-sync', { method: 'POST' }).then(r => r.json())
+      const result = res.result || {}
+      totalImported += result.imported || 0
+      setFeishuResult({ ...result, imported: totalImported })
+      setFeishuLog(prev => [...prev, ...(result.errors || []).map((e: string) => `⚠ ${e}`)])
+
+      if (result.remaining > 0) {
+        setFeishuLog(prev => [...prev, `已同步 ${totalImported} 条，继续同步剩余 ${result.remaining} 个会话...`])
+      } else {
+        hasMore = false
       }
-    }, 1500)
+    }
+
+    setFeishuSyncing(false)
+    setFeishuLog(prev => [...prev, `✅ 同步完成，共导入 ${totalImported} 条消息`])
   }
 
   // ---------- Gmail OAuth ----------
