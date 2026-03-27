@@ -319,7 +319,7 @@ async function fullSync(userId: string) {
           await exec(
             `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id)
              VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT (source_id) DO NOTHING`,
+             ON CONFLICT (user_id, source_id) DO NOTHING`,
             [userId, contactName, direction, msg.content, ts, msg.message_id],
           )
 
@@ -360,6 +360,7 @@ async function fullSync(userId: string) {
         )
 
         result.imported += chatImported
+        lastResult = { ...result } // update incrementally for realtime progress
         log(`    -> 导入 ${chatImported} 条`)
       } catch (err: any) {
         if (err instanceof TokenExpiredError) {
@@ -379,7 +380,7 @@ async function fullSync(userId: string) {
               await exec(
                 `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id)
                  VALUES (?, ?, ?, ?, ?, ?)
-                 ON CONFLICT (source_id) DO NOTHING`,
+                 ON CONFLICT (user_id, source_id) DO NOTHING`,
                 [userId, contactName, direction, msg.content, ts, msg.message_id],
               )
               if (!isSelf) {
@@ -412,6 +413,7 @@ async function fullSync(userId: string) {
               [retryTs, userId, chat.chat_id],
             )
             result.imported += retryImported
+            lastResult = { ...result } // update incrementally for realtime progress
             log(`    -> 重试成功，导入 ${retryImported} 条`)
           } catch (retryErr: any) {
             result.errors.push(`${chat.name}: 重试失败 ${retryErr.message}`)
@@ -484,7 +486,7 @@ async function quickSync(userId: string) {
           await exec(
             `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id)
              VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT (source_id) DO NOTHING`,
+             ON CONFLICT (user_id, source_id) DO NOTHING`,
             [userId, contactName, direction, msg.content, ts, msg.message_id],
           )
 
