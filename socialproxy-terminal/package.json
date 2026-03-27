@@ -1,0 +1,21 @@
+{
+  "name": "socialproxy-terminal",
+  "version": "0.1.0",
+  "description": "Social Proxy Terminal — 把终端变成联系人",
+  "bin": {
+    "socialproxy-terminal": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/cli.ts",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "open": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.0.0",
+    "ts-node": "^10.0.0"
+  }
+}
