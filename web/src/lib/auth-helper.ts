@@ -1,9 +1,25 @@
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/auth'
 import { NextResponse } from 'next/server'
-import { exec } from '@/lib/db'
+import { exec, queryOne } from '@/lib/db'
+import { headers } from 'next/headers'
 
 export async function getUserId(): Promise<string | null> {
+  // 1. 先尝试 Bearer token（终端/API 调用）
+  const headerList = await headers()
+  const authHeader = headerList.get('authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    if (token) {
+      const row = await queryOne<{ user_id: string }>(
+        `SELECT user_id FROM settings WHERE key = 'agent_api_token' AND value = ?`,
+        [token]
+      )
+      if (row) return row.user_id
+    }
+  }
+
+  // 2. 再尝试 session cookie（Web 登录）
   const session = await getServerSession(authOptions)
   if (!session?.user) return null
 

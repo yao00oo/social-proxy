@@ -376,15 +376,35 @@ async function fullSync(userId: string) {
       threadMap.set(chat.chat_id, thread)
     }
 
-    // 4. Sync chats in API order (ByActiveTimeDesc — most recently active first)
+    // 4. Sort chats: already synced (has messages, needs incremental) first, then new ones
+    //    This way incremental syncs (fast) go first, full history (slow) goes last
+    const sortedChats = [...chats].sort((a, b) => {
+      const ta = threadMap.get(a.chat_id)!
+      const tb = threadMap.get(b.chat_id)!
+      const aHas = ta.last_sync_ts !== '0' ? 1 : 0
+      const bHas = tb.last_sync_ts !== '0' ? 1 : 0
+      return bHas - aHas // synced ones first
+    })
+
     let chatIndex = 0
-    for (const chat of chats) {
-      // Check timeout — stop early if approaching Vercel limit
+    let consecutiveRateLimits = 0
+    const MAX_CONSECUTIVE_RATE_LIMITS = 5 // 连续 5 次限流就暂停本轮
+
+    for (const chat of sortedChats) {
+      // Check timeout
       if (Date.now() - startTime > TIMEOUT_MS) {
-        result.remaining = chats.length - chatIndex
-        log(`接近超时，已处理 ${chatIndex} 个会话，剩余 ${result.remaining} 个`)
+        result.remaining = sortedChats.length - chatIndex
+        log(`⏱ 接近超时，已处理 ${chatIndex} 个会话，剩余 ${result.remaining} 个`)
         break
       }
+
+      // 连续限流太多次，提前退出等下一轮
+      if (consecutiveRateLimits >= MAX_CONSECUTIVE_RATE_LIMITS) {
+        result.remaining = sortedChats.length - chatIndex
+        log(`⚠ 连续 ${MAX_CONSECUTIVE_RATE_LIMITS} 次限流，暂停本轮，剩余 ${result.remaining} 个`)
+        break
+      }
+
       chatIndex++
 
       const thread = threadMap.get(chat.chat_id)!
@@ -393,35 +413,42 @@ async function fullSync(userId: string) {
         ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
         : undefined
 
-      const pct = Math.round((chatIndex / chats.length) * 100)
-      await log(`  [${pct}%] 同步 ${chatIndex}/${chats.length}: ${chat.name}`)
+      const pct = Math.round((chatIndex / sortedChats.length) * 100)
+      await log(`  [${pct}%] 同步 ${chatIndex}/${sortedChats.length}: ${chat.name}`)
 
       try {
-        // Rate limit: wait 2s between chats to avoid feishu API throttling (99991400)
-        if (chatIndex > 1) await new Promise(r => setTimeout(r, 2000))
+        // 动态间隔：刚限流过就等久一点
+        const waitMs = consecutiveRateLimits > 0 ? 3000 : 1000
+        if (chatIndex > 1) await new Promise(r => setTimeout(r, waitMs))
+
         const msgs = await listMessages(userToken, chat.chat_id, msgStartTime)
+        consecutiveRateLimits = 0 // 成功了，重置计数
+
         if (msgs.length === 0) {
-          await log(`    -> 无新消息`)
+          // 没有新消息，标记为已同步（避免下次重复拉）
+          if (lastTs === '0') await updateThreadSyncTs(thread.id, String(Date.now()))
           continue
         }
 
         const { imported: chatImported, newTs } = await processChatMessages(
           userId, channelId, thread.id, msgs, lastTs, myUserId, senderNameCache, myName,
         )
-
-        // Update thread sync ts
         await updateThreadSyncTs(thread.id, newTs)
 
         result.imported += chatImported
-        lastResult = { ...result } // update incrementally for realtime progress
+        lastResult = { ...result }
         log(`    -> 导入 ${chatImported} 条`)
       } catch (err: any) {
-        if (err instanceof TokenExpiredError) {
+        if (err instanceof RateLimitError) {
+          consecutiveRateLimits++
+          result.errors.push(`${chat.name}: 限流`)
+          log(`    ⚠ 限流 (${consecutiveRateLimits}/${MAX_CONSECUTIVE_RATE_LIMITS})`)
+        } else if (err instanceof TokenExpiredError) {
           log(`    token 过期，刷新后重试...`)
           try {
             userToken = await ensureValidToken(userId)
-            // Retry this chat
             const retryMsgs = await listMessages(userToken, chat.chat_id, msgStartTime)
+            consecutiveRateLimits = 0
             const { imported: retryImported, newTs: retryTs } = await processChatMessages(
               userId, channelId, thread.id, retryMsgs, lastTs, myUserId, senderNameCache, myName,
             )

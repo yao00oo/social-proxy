@@ -9,8 +9,11 @@ export function middleware(request: NextRequest) {
   const isAuthApi = request.nextUrl.pathname.startsWith('/api/auth')
   const isHealthApi = request.nextUrl.pathname.startsWith('/api/health')
   const isAgentApi = request.nextUrl.pathname.startsWith('/api/agent-sync') || request.nextUrl.pathname.startsWith('/api/auth/device')
+  const isTerminalApi = request.nextUrl.pathname.startsWith('/api/terminal')
   const isStaticFile = request.nextUrl.pathname.endsWith('.sh') || request.nextUrl.pathname.endsWith('.ps1')
-  const isPublic = isLoginPage || isDeviceAuth || isAuthApi || isHealthApi || isAgentApi || isStaticFile
+  // Bearer token 请求不走 cookie 拦截（由 getUserId() 内部验证 token）
+  const hasBearerToken = request.headers.get('authorization')?.startsWith('Bearer ')
+  const isPublic = isLoginPage || isDeviceAuth || isAuthApi || isHealthApi || isAgentApi || isStaticFile || isTerminalApi || hasBearerToken
 
   if (!token && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
