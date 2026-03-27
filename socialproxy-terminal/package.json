@@ -1,14 +1,26 @@
 {
   "name": "socialproxy-terminal",
   "version": "0.1.0",
-  "description": "Social Proxy Terminal — 把终端变成联系人",
+  "description": "Social Proxy Terminal — 一行命令把终端变成 Social Proxy 联系人",
   "bin": {
-    "socialproxy-terminal": "./dist/cli.js"
+    "socialproxy-terminal": "dist/cli.js"
   },
+  "files": [
+    "dist/**/*"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "tsc",
     "dev": "ts-node src/cli.ts",
     "start": "node dist/cli.js"
+  },
+  "keywords": ["social-proxy", "terminal", "messaging", "cli"],
+  "author": "yaoyao",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yao00oo/social-proxy",
+    "directory": "socialproxy-terminal"
   },
   "dependencies": {
     "open": "^10.0.0"
