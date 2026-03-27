@@ -291,24 +291,30 @@ async function fullSync(userId: string) {
       )
     }
 
-    // 3. Sync all chats (ordered by recency from API)
+    // 3. Sort chats: unsynced first (last_sync_ts='0'), then by last_sync_ts ascending (oldest first)
+    const syncStates = await query<{ chat_id: string; last_sync_ts: string }>(
+      `SELECT chat_id, last_sync_ts FROM feishu_sync_state WHERE user_id = ?`,
+      [userId],
+    )
+    const stateMap = new Map(syncStates.map(s => [s.chat_id, s.last_sync_ts]))
+
+    // Unsynced chats first (in API recency order), then already-synced (oldest sync first)
+    const unsynced = chats.filter(c => (stateMap.get(c.chat_id) || '0') === '0')
+    const synced = chats.filter(c => (stateMap.get(c.chat_id) || '0') !== '0')
+      .sort((a, b) => parseInt(stateMap.get(a.chat_id) || '0') - parseInt(stateMap.get(b.chat_id) || '0'))
+    const sortedChats = [...unsynced, ...synced]
 
     let chatIndex = 0
-    for (const chat of chats) {
+    for (const chat of sortedChats) {
       // Check timeout — stop early if approaching Vercel limit
       if (Date.now() - startTime > TIMEOUT_MS) {
-        result.remaining = chats.length - chatIndex
-        log(`⏱ 接近超时，已同步 ${chatIndex} 个会话，剩余 ${result.remaining} 个，请再次点击同步继续`)
+        result.remaining = sortedChats.length - chatIndex
+        log(`⏱ 接近超时，已处理 ${chatIndex} 个会话，剩余 ${result.remaining} 个`)
         break
       }
       chatIndex++
 
-      const stateRow = await queryOne<{ last_sync_ts: string }>(
-        `SELECT last_sync_ts FROM feishu_sync_state WHERE user_id = ? AND chat_id = ?`,
-        [userId, chat.chat_id],
-      )
-
-      const lastTs = stateRow?.last_sync_ts || '0'
+      const lastTs = stateMap.get(chat.chat_id) || '0'
       const msgStartTime = lastTs !== '0'
         ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
         : undefined
@@ -330,13 +336,14 @@ async function fullSync(userId: string) {
           const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
           const direction = isSelf ? 'sent' : 'received'
           const contactName = chat.chat_type === 'p2p' ? chat.name : chat.name
+          const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
 
           // Insert message (ON CONFLICT DO NOTHING for dedup by source_id)
           await exec(
-            `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id)
-             VALUES (?, ?, ?, ?, ?, ?)
+            `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (user_id, source_id) DO NOTHING`,
-            [userId, contactName, direction, msg.content, ts, msg.message_id],
+            [userId, contactName, direction, msg.content, ts, msg.message_id, senderDisplay],
           )
 
           // Upsert contact for received messages
@@ -392,12 +399,13 @@ async function fullSync(userId: string) {
               const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
               const direction = isSelf ? 'sent' : 'received'
               const contactName = chat.name
+              const senderDisplay = isSelf ? (myName || '我') : (msg.sender_name || '未知')
 
               await exec(
-                `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id)
-                 VALUES (?, ?, ?, ?, ?, ?)
+                `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT (user_id, source_id) DO NOTHING`,
-                [userId, contactName, direction, msg.content, ts, msg.message_id],
+                [userId, contactName, direction, msg.content, ts, msg.message_id, senderDisplay],
               )
               if (!isSelf) {
                 await exec(

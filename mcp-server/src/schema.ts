@@ -32,6 +32,14 @@ export const sessions = pgTable('sessions', {
   expires: timestamp('expires', { mode: 'date' }).notNull(),
 })
 
+export const verificationTokens = pgTable('verification_tokens', {
+  identifier: text('identifier').notNull(),
+  token: text('token').notNull(),
+  expires: timestamp('expires', { mode: 'date' }).notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.identifier, t.token] }),
+])
+
 // ── 聊天记录 ─────────────────────────────────────────
 export const messages = pgTable('messages', {
   id: serial('id').primaryKey(),
@@ -41,6 +49,7 @@ export const messages = pgTable('messages', {
   content: text('content').notNull(),
   timestamp: text('timestamp').notNull(),
   sourceId: text('source_id'),
+  senderName: text('sender_name'),
 }, (t) => [
   index('idx_messages_user_contact').on(t.userId, t.contactName),
   index('idx_messages_user_ts').on(t.userId, t.timestamp),

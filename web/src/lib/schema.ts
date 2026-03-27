@@ -49,6 +49,7 @@ export const messages = pgTable('messages', {
   content: text('content').notNull(),
   timestamp: text('timestamp').notNull(),
   sourceId: text('source_id'),
+  senderName: text('sender_name'),
 }, (t) => [
   index('idx_messages_user_contact').on(t.userId, t.contactName),
   index('idx_messages_user_ts').on(t.userId, t.timestamp),
