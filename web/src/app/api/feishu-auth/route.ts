@@ -33,13 +33,12 @@ export async function POST(req: NextRequest) {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const appIdRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_app_id'`)
-  const appId = appIdRow?.value
-  if (!appId) return NextResponse.json({ error: '请先填写飞书 App ID' }, { status: 400 })
+  const appId = process.env.FEISHU_APP_ID
+  if (!appId) return NextResponse.json({ error: '未配置飞书 App ID（环境变量 FEISHU_APP_ID）' }, { status: 400 })
 
   const state = crypto.randomBytes(16).toString('hex')
-  await exec(`INSERT INTO settings(key,value) VALUES('feishu_oauth_state',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, [state])
-  await exec(`INSERT INTO settings(key,value) VALUES('feishu_auth_done','0') ON CONFLICT(key) DO UPDATE SET value='0'`)
+  await exec(`INSERT INTO settings(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value`, [userId, 'feishu_oauth_state', state])
+  await exec(`INSERT INTO settings(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value`, [userId, 'feishu_auth_done', '0'])
 
   const params = new URLSearchParams({
     app_id: appId,
@@ -57,7 +56,7 @@ export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const doneRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_auth_done'`)
-  const nameRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='feishu_user_name'`)
+  const doneRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key=? AND user_id=?`, ['feishu_auth_done', userId])
+  const nameRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key=? AND user_id=?`, ['feishu_user_name', userId])
   return NextResponse.json({ done: doneRow?.value === '1', name: nameRow?.value || '' })
 }

@@ -79,12 +79,12 @@ class TokenExpiredError extends Error {
 }
 
 // ── Token management ──
-async function ensureValidToken(): Promise<string> {
-  const token = await getSetting('feishu_user_access_token')
-  const tokenTime = parseInt(await getSetting('feishu_token_time') || '0', 10)
-  const refreshTk = await getSetting('feishu_refresh_token')
-  const appId = await getSetting('feishu_app_id')
-  const appSecret = await getSetting('feishu_app_secret')
+async function ensureValidToken(userId: string): Promise<string> {
+  const token = await getSetting('feishu_user_access_token', userId)
+  const tokenTime = parseInt(await getSetting('feishu_token_time', userId) || '0', 10)
+  const refreshTk = await getSetting('feishu_refresh_token', userId)
+  const appId = process.env.FEISHU_APP_ID
+  const appSecret = process.env.FEISHU_APP_SECRET
 
   if (!token) throw new Error('未授权，请先在配置页面完成飞书 OAuth 授权')
 
@@ -92,7 +92,7 @@ async function ensureValidToken(): Promise<string> {
   const age = Date.now() - tokenTime
   if (age > (2 * 60 - 5) * 60 * 1000 && refreshTk) {
     // Get app access token first
-    if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret')
+    if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret（环境变量）')
     const appRes = await feishuPost('/auth/v3/app_access_token/internal', { app_id: appId, app_secret: appSecret })
     if (appRes.code !== 0) throw new Error(`getAppAccessToken: ${appRes.msg}`)
     const appToken = appRes.app_access_token
@@ -108,10 +108,11 @@ async function ensureValidToken(): Promise<string> {
     const newToken = refreshRes.data.access_token
     const newRefresh = refreshRes.data.refresh_token
 
-    // Save new tokens to settings
-    await exec(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['feishu_user_access_token', newToken])
-    await exec(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['feishu_refresh_token', newRefresh])
-    await exec(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, ['feishu_token_time', Date.now().toString()])
+    // Save new tokens to settings (per-user)
+    const upsertSql = `INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT (user_id, key) DO UPDATE SET value = EXCLUDED.value`
+    await exec(upsertSql, [userId, 'feishu_user_access_token', newToken])
+    await exec(upsertSql, [userId, 'feishu_refresh_token', newRefresh])
+    await exec(upsertSql, [userId, 'feishu_token_time', Date.now().toString()])
 
     return newToken
   }
@@ -264,9 +265,9 @@ async function fullSync(userId: string) {
   const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[] }
 
   try {
-    let userToken = await ensureValidToken()
-    const myName = await getSetting('feishu_user_name')
-    const myUserId = await getSetting('feishu_user_id')
+    let userToken = await ensureValidToken(userId)
+    const myName = await getSetting('feishu_user_name', userId)
+    const myUserId = await getSetting('feishu_user_id', userId)
 
     // 1. List all chats
     log('获取会话列表...')
@@ -364,7 +365,7 @@ async function fullSync(userId: string) {
         if (err instanceof TokenExpiredError) {
           log(`    token 过期，刷新后重试...`)
           try {
-            userToken = await ensureValidToken()
+            userToken = await ensureValidToken(userId)
             // Retry this chat
             const retryMsgs = await listMessages(userToken, chat.chat_id, startTime)
             let retryTs = lastTs
@@ -443,9 +444,9 @@ async function quickSync(userId: string) {
   }
 
   try {
-    let userToken = await ensureValidToken()
-    const myName = await getSetting('feishu_user_name')
-    const myUserId = await getSetting('feishu_user_id')
+    let userToken = await ensureValidToken(userId)
+    const myName = await getSetting('feishu_user_name', userId)
+    const myUserId = await getSetting('feishu_user_id', userId)
 
     // Only check chats active in last 90 days
     const since = String(Date.now() - 90 * 24 * 60 * 60 * 1000)
@@ -512,7 +513,7 @@ async function quickSync(userId: string) {
         )
       } catch (err: any) {
         if (err instanceof TokenExpiredError) {
-          try { userToken = await ensureValidToken() } catch { /* ignore */ }
+          try { userToken = await ensureValidToken(userId) } catch { /* ignore */ }
         }
         errors++
       }

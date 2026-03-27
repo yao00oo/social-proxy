@@ -11,8 +11,6 @@ interface Settings {
   smtp_pass: string
   smtp_from_name: string
   permission_mode: string
-  feishu_app_id: string
-  feishu_app_secret: string
   imap_host: string
   imap_port: string
   imap_user: string
@@ -28,8 +26,6 @@ const defaultSettings: Settings = {
   smtp_pass: '',
   smtp_from_name: '',
   permission_mode: 'suggest',
-  feishu_app_id: '',
-  feishu_app_secret: '',
   imap_host: '',
   imap_port: '993',
   imap_user: '',
@@ -296,21 +292,8 @@ export default function SettingsPage() {
   // ---------- Feishu OAuth ----------
 
   const handleFeishuAuth = async () => {
-    if (!settings.feishu_app_id || !settings.feishu_app_secret) {
-      alert('请先填写飞书 App ID 和 App Secret 并保存')
-      return
-    }
     setFeishuAuthing(true)
     setFeishuAuthUrl('')
-
-    await fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        feishu_app_id: settings.feishu_app_id,
-        feishu_app_secret: settings.feishu_app_secret,
-      }),
-    })
 
     const res = await fetch('/api/feishu-auth', { method: 'POST' })
     const data = await res.json()
@@ -548,11 +531,6 @@ export default function SettingsPage() {
                   <span className="material-symbols-outlined text-lg">close</span>
                 </button>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Input label="App ID" value={settings.feishu_app_id} onChange={(v) => setSettings({ ...settings, feishu_app_id: v })} placeholder="cli_xxxxxxxxx" />
-                <Input label="App Secret" type="password" value={settings.feishu_app_secret} onChange={(v) => setSettings({ ...settings, feishu_app_secret: v })} placeholder="••••••••" />
-              </div>
-
               <div className="flex items-center gap-3 flex-wrap">
                 {feishuAuthed ? (
                   <div className="flex items-center gap-1.5">

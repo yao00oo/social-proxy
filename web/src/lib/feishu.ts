@@ -30,16 +30,20 @@ function post(path: string, body: object, headers: Record<string, string> = {}):
 }
 
 // Settings helpers
-export async function getSetting(key: string): Promise<string> {
+export async function getSetting(key: string, userId?: string): Promise<string> {
+  if (userId) {
+    const row = await queryOne<{ value: string }>('SELECT value FROM settings WHERE key = ? AND user_id = ?', [key, userId])
+    return row?.value || ''
+  }
   const row = await queryOne<{ value: string }>('SELECT value FROM settings WHERE key = ?', [key])
   return row?.value || ''
 }
 
 // Get app access token
 export async function getAppAccessToken(): Promise<string> {
-  const appId = await getSetting('feishu_app_id')
-  const appSecret = await getSetting('feishu_app_secret')
-  if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret')
+  const appId = process.env.FEISHU_APP_ID
+  const appSecret = process.env.FEISHU_APP_SECRET
+  if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret（环境变量 FEISHU_APP_ID / FEISHU_APP_SECRET）')
   const res = await post('/auth/v3/app_access_token/internal', { app_id: appId, app_secret: appSecret })
   if (res.code !== 0) throw new Error(`getAppAccessToken: ${res.msg}`)
   return res.app_access_token
