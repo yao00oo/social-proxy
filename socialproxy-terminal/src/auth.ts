@@ -27,19 +27,19 @@ function getDeviceInfo() {
 }
 
 export async function deviceAuth(): Promise<AuthResult> {
-  const deviceCode = crypto.randomBytes(16).toString('hex')
-  const device = getDeviceInfo()
+  // 1. 向服务端申请 device code
+  log('申请设备码...')
+  const { status: codeStatus, body: codeBody } = await httpPost('/api/auth/device', {})
+  if (codeStatus !== 200) {
+    error(`申请设备码失败 (${codeStatus}): ${codeBody}`)
+    process.exit(1)
+  }
+  const { code: deviceCode } = JSON.parse(codeBody)
   const authUrl = `${BASE_URL}/auth/device?code=${deviceCode}`
 
   log(`打开浏览器登录中...`)
   console.log(`  如果没有自动打开，请访问：`)
   console.log(`  ${authUrl}\n`)
-
-  // 通知服务端有终端等待授权
-  await httpPost('/api/terminal/auth/start', {
-    code: deviceCode,
-    device,
-  }).catch(() => {}) // 非关键，服务端可能还没这个 API
 
   // 打开浏览器
   try {
@@ -61,14 +61,19 @@ export async function deviceAuth(): Promise<AuthResult> {
 
       if (status === 200) {
         const data = JSON.parse(body)
-        if (data.token) {
-          success(`已登录 (${data.email || 'user'})`)
+        if (data.status === 'authorized' && data.token) {
+          success(`已授权`)
           return {
             token: data.token,
             email: data.email || '',
             userId: data.userId || '',
           }
         }
+        if (data.status === 'expired') {
+          error('授权已过期，请重新运行')
+          process.exit(1)
+        }
+        // status === 'pending' → continue polling
       }
 
       if (status === 410) {

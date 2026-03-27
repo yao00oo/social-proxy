@@ -34,8 +34,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deviceAuth = deviceAuth;
-// Device Code 授权流程 — 终端生成码 → 浏览器授权 → 终端拿到 token
-const crypto = __importStar(require("crypto"));
 const os = __importStar(require("os"));
 const http_1 = require("./http");
 const logger_1 = require("./logger");
@@ -54,17 +52,18 @@ function getDeviceInfo() {
     };
 }
 async function deviceAuth() {
-    const deviceCode = crypto.randomBytes(16).toString('hex');
-    const device = getDeviceInfo();
+    // 1. 向服务端申请 device code
+    (0, logger_1.log)('申请设备码...');
+    const { status: codeStatus, body: codeBody } = await (0, http_1.httpPost)('/api/auth/device', {});
+    if (codeStatus !== 200) {
+        (0, logger_1.error)(`申请设备码失败 (${codeStatus}): ${codeBody}`);
+        process.exit(1);
+    }
+    const { code: deviceCode } = JSON.parse(codeBody);
     const authUrl = `${http_1.BASE_URL}/auth/device?code=${deviceCode}`;
     (0, logger_1.log)(`打开浏览器登录中...`);
     console.log(`  如果没有自动打开，请访问：`);
     console.log(`  ${authUrl}\n`);
-    // 通知服务端有终端等待授权
-    await (0, http_1.httpPost)('/api/terminal/auth/start', {
-        code: deviceCode,
-        device,
-    }).catch(() => { }); // 非关键，服务端可能还没这个 API
     // 打开浏览器
     try {
         const open = (await Promise.resolve().then(() => __importStar(require('open')))).default;
@@ -83,14 +82,19 @@ async function deviceAuth() {
             const { status, body } = await (0, http_1.httpGet)(`/api/auth/device/poll?code=${deviceCode}`);
             if (status === 200) {
                 const data = JSON.parse(body);
-                if (data.token) {
-                    (0, logger_1.success)(`已登录 (${data.email || 'user'})`);
+                if (data.status === 'authorized' && data.token) {
+                    (0, logger_1.success)(`已授权`);
                     return {
                         token: data.token,
                         email: data.email || '',
                         userId: data.userId || '',
                     };
                 }
+                if (data.status === 'expired') {
+                    (0, logger_1.error)('授权已过期，请重新运行');
+                    process.exit(1);
+                }
+                // status === 'pending' → continue polling
             }
             if (status === 410) {
                 (0, logger_1.error)('授权已过期，请重新运行');

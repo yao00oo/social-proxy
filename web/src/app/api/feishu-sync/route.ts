@@ -73,12 +73,13 @@ async function feishuGetWithRetry(path: string, token: string, params: Record<st
     const res = await feishuGet(path, token, params)
     if (res.code === 0 || res.code === 230002 || res.code === 102004) return res
     if (res.code === 99991403) throw new TokenExpiredError(res.msg)
+    // 限流：指数退避 5s, 10s, 20s
     if (res.code === 99991400) {
       if (attempt < maxRetries) {
-        await new Promise(r => setTimeout(r, 2000 * Math.pow(2, attempt)))
+        await new Promise(r => setTimeout(r, 5000 * Math.pow(2, attempt)))
         continue
       }
-      return res
+      throw new RateLimitError(res.msg)
     }
     if (attempt < maxRetries) {
       await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)))
@@ -86,6 +87,10 @@ async function feishuGetWithRetry(path: string, token: string, params: Record<st
     }
     return res
   }
+}
+
+class RateLimitError extends Error {
+  constructor(msg: string) { super(msg); this.name = 'RateLimitError' }
 }
 
 class TokenExpiredError extends Error {

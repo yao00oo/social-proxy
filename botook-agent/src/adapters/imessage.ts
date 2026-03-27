@@ -154,22 +154,33 @@ export const imessageAdapter: Adapter = {
   name: 'iMessage',
 
   async checkAccess(): Promise<boolean> {
-    try {
-      const db = openDb();
-      db.close();
-      return true;
-    } catch (err: any) {
-      if (err.code === 'SQLITE_CANTOPEN' || err.message?.includes('permission')) {
-        error('Cannot access iMessage database.');
-        console.log('\n  To grant access:');
-        console.log('  1. Open System Settings > Privacy & Security > Full Disk Access');
-        console.log('  2. Click the + button');
-        console.log('  3. Add your terminal app (Terminal, iTerm2, etc.)');
-        console.log('  4. Restart your terminal and try again.\n');
-        return false;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      try {
+        const db = openDb();
+        db.close();
+        if (attempt > 0) success('iMessage 权限已获取！');
+        return true;
+      } catch (err: any) {
+        if (err.code === 'SQLITE_CANTOPEN' || err.message?.includes('permission') || err.message?.includes('authorization denied')) {
+          if (attempt === 0) {
+            warn('需要「完全磁盘访问」权限才能读取 iMessage');
+            console.log('\n  正在打开系统设置，请打开「终端」的开关...\n');
+            // Auto-open System Settings
+            try {
+              const { execSync } = require('child_process');
+              execSync('open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"');
+            } catch {}
+            info('等待授权中... (授权后会自动继续，无需重新运行命令)');
+          }
+          // Wait 3 seconds and retry
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+        throw err;
       }
-      throw err;
     }
+    error('等待授权超时，请手动授权后重新运行');
+    return false;
   },
 
   async exportAll(): Promise<{ messages: SyncMessage[]; contacts: SyncContact[] }> {
