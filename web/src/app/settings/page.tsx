@@ -301,6 +301,7 @@ export default function SettingsPage() {
 
     setFeishuAuthed(false)
     setFeishuAuthUrl(data.authUrl)
+    window.open(data.authUrl, '_blank', 'width=600,height=700')
     const state = data.state
 
     let tries = 0
