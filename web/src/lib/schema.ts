@@ -1,9 +1,12 @@
-// Drizzle ORM schema — 多租户 SaaS 版本，所有表含 userId
-import { pgTable, text, serial, integer, timestamp, uniqueIndex, index, primaryKey } from 'drizzle-orm/pg-core'
+// Drizzle ORM schema — 多租户 + 多平台统一模型
+import { pgTable, text, serial, integer, timestamp, uniqueIndex, index, primaryKey, jsonb } from 'drizzle-orm/pg-core'
 
-// ── 用户表（NextAuth 管理） ──────────────────────────
+// ════════════════════════════════════════════════════════
+// Auth（NextAuth 管理，不动）
+// ════════════════════════════════════════════════════════
+
 export const users = pgTable('users', {
-  id: text('id').primaryKey(), // NextAuth 生成的 UUID
+  id: text('id').primaryKey(),
   name: text('name'),
   email: text('email').unique(),
   emailVerified: timestamp('email_verified', { mode: 'date' }),
@@ -40,37 +43,182 @@ export const verificationTokens = pgTable('verification_tokens', {
   primaryKey({ columns: [t.identifier, t.token] }),
 ])
 
-// ── 聊天记录 ─────────────────────────────────────────
-export const messages = pgTable('messages', {
+// ════════════════════════════════════════════════════════
+// Channels — 数据源/渠道（飞书、Gmail、微信、Telegram...）
+// ════════════════════════════════════════════════════════
+
+export const channels = pgTable('channels', {
   id: serial('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  contactName: text('contact_name').notNull(),
-  direction: text('direction').notNull(), // 'sent' | 'received'
-  content: text('content').notNull(),
-  timestamp: text('timestamp').notNull(),
-  sourceId: text('source_id'),
-  senderName: text('sender_name'),
+  // 平台类型：feishu | gmail | wechat | telegram | whatsapp | slack | discord | custom
+  platform: text('platform').notNull(),
+  // 显示名：如"工作飞书"、"个人Gmail"
+  name: text('name').notNull(),
+  // 是否启用
+  enabled: integer('enabled').default(1),
+  // OAuth / API 凭证（加密 JSON）
+  // feishu: { app_id, app_secret, user_token, refresh_token, user_id, token_time }
+  // gmail: { access_token, refresh_token, client_id, client_secret }
+  // smtp/imap: { host, port, user, pass, from_name }
+  // telegram: { bot_token }
+  // custom: {}
+  credentials: jsonb('credentials').default({}),
+  // 同步状态（JSON，各平台自定义格式）
+  // feishu: { chats: { chat_id: { name, type, last_sync_ts } } }
+  // gmail: { history_id, last_uid }
+  // imap: { folders: { INBOX: { last_uid } } }
+  syncState: jsonb('sync_state').default({}),
+  // 权限模式: suggest（草稿确认）| auto（直接发送）
+  sendMode: text('send_mode').default('suggest'),
+  createdAt: timestamp('created_at', { mode: 'date' }).defaultNow(),
 }, (t) => [
-  index('idx_messages_user_contact').on(t.userId, t.contactName),
-  index('idx_messages_user_ts').on(t.userId, t.timestamp),
-  uniqueIndex('idx_messages_user_source').on(t.userId, t.sourceId),
+  index('idx_channels_user').on(t.userId),
+  index('idx_channels_user_platform').on(t.userId, t.platform),
 ])
 
-// ── 联系人 ───────────────────────────────────────────
+// ════════════════════════════════════════════════════════
+// Contacts — 联系人（平台无关，可跨平台合并）
+// ════════════════════════════════════════════════════════
+
 export const contacts = pgTable('contacts', {
   id: serial('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
-  email: text('email'),
-  phone: text('phone'),
-  feishuOpenId: text('feishu_open_id'),
+  avatar: text('avatar'), // URL
+  tags: jsonb('tags').default([]), // ['朋友', '同事', 'VIP']
+  notes: text('notes'),
   lastContactAt: text('last_contact_at'),
   messageCount: integer('message_count').default(0),
+  // 如果被合并到另一个联系人，此 ID 指向目标
+  mergedInto: integer('merged_into'),
 }, (t) => [
   uniqueIndex('idx_contacts_user_name').on(t.userId, t.name),
+  index('idx_contacts_user_last').on(t.userId, t.lastContactAt),
 ])
 
-// ── 配置 (per-user key-value) ────────────────────────
+// ════════════════════════════════════════════════════════
+// Contact Identities — 联系人的平台身份（一个人多个平台）
+// ════════════════════════════════════════════════════════
+
+export const contactIdentities = pgTable('contact_identities', {
+  id: serial('id').primaryKey(),
+  contactId: integer('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+  channelId: integer('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+  // 平台上的唯一 ID：飞书 open_id、邮箱地址、微信 wxid、Telegram user_id...
+  platformUid: text('platform_uid').notNull(),
+  // 该平台上的显示名（可能和 contacts.name 不同）
+  displayName: text('display_name'),
+  // 额外信息
+  email: text('email'),
+  phone: text('phone'),
+  metadata: jsonb('metadata').default({}), // 平台特有数据
+}, (t) => [
+  uniqueIndex('idx_identity_channel_uid').on(t.channelId, t.platformUid),
+  index('idx_identity_contact').on(t.contactId),
+])
+
+// ════════════════════════════════════════════════════════
+// Threads — 会话（群聊、私聊、邮件主题...）
+// ════════════════════════════════════════════════════════
+
+export const threads = pgTable('threads', {
+  id: serial('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  channelId: integer('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+  // 平台上的会话 ID：飞书 chat_id、Gmail thread_id、微信群 ID...
+  platformThreadId: text('platform_thread_id').notNull(),
+  name: text('name'),
+  // dm（私聊）| group（群聊）| channel（频道）| email_thread（邮件线程）
+  type: text('type').default('dm'),
+  // 参与者列表 JSON: [{ identity_id, name }]
+  participants: jsonb('participants').default([]),
+  lastMessageAt: text('last_message_at'),
+  lastSyncTs: text('last_sync_ts').default('0'),
+  metadata: jsonb('metadata').default({}),
+}, (t) => [
+  uniqueIndex('idx_threads_channel_pid').on(t.channelId, t.platformThreadId),
+  index('idx_threads_user').on(t.userId),
+  index('idx_threads_user_last').on(t.userId, t.lastMessageAt),
+])
+
+// ════════════════════════════════════════════════════════
+// Messages — 消息（统一格式，所有平台写入同一张表）
+// ════════════════════════════════════════════════════════
+
+export const messages = pgTable('messages', {
+  id: serial('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  threadId: integer('thread_id').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  channelId: integer('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+  // sent | received
+  direction: text('direction').notNull(),
+  // 发送者的 identity ID（可关联到 contact）
+  senderIdentityId: integer('sender_identity_id'),
+  // 冗余存发送者名（查询方便）
+  senderName: text('sender_name'),
+  // 消息内容（纯文本或主要文本）
+  content: text('content').notNull(),
+  // text | image | file | email | card | audio | video | sticker | system
+  msgType: text('msg_type').default('text'),
+  timestamp: text('timestamp').notNull(),
+  // 平台消息 ID（去重用）
+  platformMsgId: text('platform_msg_id'),
+  // 平台特有数据 JSON：
+  // 邮件: { subject, to, cc, bcc, html }
+  // 飞书: { mentions: [...], parent_id, image_key }
+  // 微信: { msg_svr_id }
+  metadata: jsonb('metadata').default({}),
+}, (t) => [
+  index('idx_messages_user_thread').on(t.userId, t.threadId),
+  index('idx_messages_user_ts').on(t.userId, t.timestamp),
+  index('idx_messages_thread_ts').on(t.threadId, t.timestamp),
+  uniqueIndex('idx_messages_channel_pid').on(t.channelId, t.platformMsgId),
+])
+
+// ════════════════════════════════════════════════════════
+// Summaries — AI 摘要（按 thread）
+// ════════════════════════════════════════════════════════
+
+export const summaries = pgTable('summaries', {
+  id: serial('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  threadId: integer('thread_id').notNull().references(() => threads.id, { onDelete: 'cascade' }),
+  summary: text('summary'),
+  startTime: text('start_time'),
+  endTime: text('end_time'),
+  messageCount: integer('message_count'),
+  updatedAt: timestamp('updated_at', { mode: 'date' }).defaultNow(),
+}, (t) => [
+  uniqueIndex('idx_summaries_user_thread').on(t.userId, t.threadId),
+])
+
+// ════════════════════════════════════════════════════════
+// Documents — 文档（飞书文档、邮件附件、共享文件...）
+// ════════════════════════════════════════════════════════
+
+export const documents = pgTable('documents', {
+  id: serial('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  channelId: integer('channel_id').notNull().references(() => channels.id, { onDelete: 'cascade' }),
+  platformDocId: text('platform_doc_id').notNull(),
+  title: text('title').notNull(),
+  docType: text('doc_type'), // doc | sheet | slide | wiki | pdf | attachment
+  url: text('url'),
+  content: text('content'),
+  summary: text('summary'),
+  createdTime: text('created_time'),
+  modifiedTime: text('modified_time'),
+  syncedAt: timestamp('synced_at', { mode: 'date' }).defaultNow(),
+  metadata: jsonb('metadata').default({}),
+}, (t) => [
+  uniqueIndex('idx_docs_channel_pid').on(t.channelId, t.platformDocId),
+  index('idx_docs_user').on(t.userId),
+])
+
+// ════════════════════════════════════════════════════════
+// Settings — 用户配置（保留 KV 模式）
+// ════════════════════════════════════════════════════════
+
 export const settings = pgTable('settings', {
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   key: text('key').notNull(),
@@ -79,64 +227,10 @@ export const settings = pgTable('settings', {
   primaryKey({ columns: [t.userId, t.key] }),
 ])
 
-// ── 飞书用户映射 ─────────────────────────────────────
-export const feishuUsers = pgTable('feishu_users', {
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  openId: text('open_id').notNull(),
-  name: text('name').notNull(),
-  email: text('email'),
-  phone: text('phone'),
-}, (t) => [
-  primaryKey({ columns: [t.userId, t.openId] }),
-  index('idx_feishu_users_name').on(t.userId, t.name),
-])
+// ════════════════════════════════════════════════════════
+// AI Conversations — 小林对话历史
+// ════════════════════════════════════════════════════════
 
-// ── 飞书文档 ─────────────────────────────────────────
-export const feishuDocs = pgTable('feishu_docs', {
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  docId: text('doc_id').notNull(),
-  title: text('title').notNull(),
-  docType: text('doc_type'),
-  url: text('url'),
-  createdTime: text('created_time'),
-  modifiedTime: text('modified_time'),
-  content: text('content'),
-  summary: text('summary'),
-  syncedAt: text('synced_at'),
-}, (t) => [
-  primaryKey({ columns: [t.userId, t.docId] }),
-  index('idx_feishu_docs_modified').on(t.userId, t.modifiedTime),
-])
-
-// ── 飞书同步状态 ─────────────────────────────────────
-export const feishuSyncState = pgTable('feishu_sync_state', {
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  chatId: text('chat_id').notNull(),
-  chatName: text('chat_name'),
-  chatType: text('chat_type'),
-  lastSyncTs: text('last_sync_ts').default('0'),
-}, (t) => [
-  primaryKey({ columns: [t.userId, t.chatId] }),
-])
-
-// ── 回复建议 ─────────────────────────────────────────
-export const replySuggestions = pgTable('reply_suggestions', {
-  id: serial('id').primaryKey(),
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  messageId: text('message_id'),
-  contactName: text('contact_name').notNull(),
-  chatId: text('chat_id'),
-  incomingContent: text('incoming_content').notNull(),
-  suggestion: text('suggestion'),
-  createdAt: text('created_at').notNull(),
-  isRead: integer('is_read').default(0),
-  isAtMe: integer('is_at_me').default(0),
-}, (t) => [
-  uniqueIndex('idx_reply_user_msgid').on(t.userId, t.messageId),
-  index('idx_reply_user_created').on(t.userId, t.createdAt),
-])
-
-// ── AI 对话（Phase 3） ───────────────────────────────
 export const conversations = pgTable('conversations', {
   id: serial('id').primaryKey(),
   userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
@@ -152,29 +246,6 @@ export const conversationMessages = pgTable('conversation_messages', {
   conversationId: integer('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
   role: text('role').notNull(), // 'user' | 'assistant' | 'tool'
   content: text('content'),
-  toolCalls: text('tool_calls'), // JSON string
+  toolCalls: text('tool_calls'), // JSON
   createdAt: timestamp('created_at', { mode: 'date' }).defaultNow(),
 })
-
-// ── 邮件同步状态 ─────────────────────────────────────
-export const emailSyncState = pgTable('email_sync_state', {
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  folder: text('folder').notNull(),
-  lastUid: integer('last_uid').default(0),
-}, (t) => [
-  primaryKey({ columns: [t.userId, t.folder] }),
-])
-
-// ── 聊天摘要 ─────────────────────────────────────────
-export const chatSummaries = pgTable('chat_summaries', {
-  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
-  chatId: text('chat_id').notNull(),
-  chatName: text('chat_name'),
-  startTime: text('start_time'),
-  endTime: text('end_time'),
-  messageCount: integer('message_count'),
-  summary: text('summary'),
-  updatedAt: text('updated_at'),
-}, (t) => [
-  primaryKey({ columns: [t.userId, t.chatId] }),
-])

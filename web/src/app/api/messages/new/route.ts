@@ -1,4 +1,4 @@
-// GET /api/messages/new — 获取最近新消息（移植自 MCP get_new_messages）
+// GET /api/messages/new — 获取最近新消息
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -17,11 +17,9 @@ export async function GET(req: NextRequest) {
       m.contact_name,
       m.content as incoming_content,
       m.timestamp as created_at,
-      COALESCE(r.is_at_me, 0) as is_at_me,
-      COALESCE(r.is_read, 0) as is_read,
-      r.suggestion
+      m.sender_name,
+      COALESCE(m.is_read, 0) as is_read
     FROM messages m
-    LEFT JOIN reply_suggestions r ON m.source_id = r.message_id
     WHERE m.timestamp::timestamp > NOW() - (? || ' minutes')::interval
       AND m.direction = 'received'
       AND m.user_id = ?
@@ -31,9 +29,8 @@ export async function GET(req: NextRequest) {
 
   const messages = rows.map(row => ({
     ...row,
-    is_at_me: !!row.is_at_me,
+    is_at_me: false,
     is_read: !!row.is_read,
-    suggestion: row.suggestion || null,
   }))
 
   return NextResponse.json({ messages })

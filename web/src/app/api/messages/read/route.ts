@@ -12,9 +12,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '需要提供消息 ID 列表' }, { status: 400 })
   }
 
+  const placeholders = ids.map(() => '?').join(',')
   await exec(
-    `UPDATE reply_suggestions SET is_read = 1 WHERE id IN (${ids.map(() => '?').join(',')})`,
-    ids
+    `UPDATE messages SET is_read = 1 WHERE id IN (${placeholders}) AND user_id = ?`,
+    [...ids, userId]
   )
 
   return NextResponse.json({ success: true, count: ids.length })
