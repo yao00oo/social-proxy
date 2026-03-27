@@ -1,8 +1,16 @@
-// POST /api/gmail-sync — 用 Gmail API 同步邮件到本地数据库
+// POST /api/gmail-sync — 用 Gmail API 同步邮件到本地数据库（统一 schema）
 // GET  /api/gmail-sync — 查询同步状态
 import { NextResponse } from 'next/server'
 import { query, queryOne, exec } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
+import {
+  getOrCreateChannel,
+  getOrCreateThread,
+  getOrCreateContact,
+  getOrCreateContactIdentity,
+  insertUnifiedMessage,
+  updateContactStats,
+} from '@/lib/sync-helpers'
 
 let syncRunning = false
 let syncLog: string[] = []
@@ -18,20 +26,21 @@ export async function GET() {
 function log(msg: string) { console.log(msg); syncLog.push(msg) }
 
 // 确保 token 有效，过期则刷新
-async function ensureToken(): Promise<string> {
-  const getSetting = async (key: string) => (await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key=?`, [key]))?.value || ''
-  const upsertSql = `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+// Now reads credentials from channels table instead of settings
+async function ensureToken(channelId: number): Promise<string> {
+  const row = await queryOne<{ credentials: any }>('SELECT credentials FROM channels WHERE id = ?', [channelId])
+  const creds = row?.credentials || {}
 
-  let token = await getSetting('gmail_access_token')
-  const tokenTime = parseInt(await getSetting('gmail_token_time') || '0')
-  const expiresIn = parseInt(await getSetting('gmail_token_expires') || '3600')
-  const refreshToken = await getSetting('gmail_refresh_token')
+  let token = creds.access_token || ''
+  const tokenTime = parseInt(creds.token_time || '0')
+  const expiresIn = parseInt(creds.expires_in || '3600')
+  const refreshToken = creds.refresh_token || ''
 
   // 提前 5 分钟刷新
   if (Date.now() - tokenTime > (expiresIn - 300) * 1000 && refreshToken) {
     log('刷新 Gmail token...')
-    const clientId = await getSetting('gmail_client_id')
-    const clientSecret = await getSetting('gmail_client_secret')
+    const clientId = creds.client_id || ''
+    const clientSecret = creds.client_secret || ''
 
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -46,9 +55,14 @@ async function ensureToken(): Promise<string> {
     const data = await res.json()
     if (data.access_token) {
       token = data.access_token
-      await exec(upsertSql, ['gmail_access_token', token])
-      await exec(upsertSql, ['gmail_token_time', Date.now().toString()])
-      await exec(upsertSql, ['gmail_token_expires', (data.expires_in || 3600).toString()])
+      // Update credentials in channels table
+      const newCreds = {
+        ...creds,
+        access_token: token,
+        token_time: Date.now().toString(),
+        expires_in: (data.expires_in || 3600).toString(),
+      }
+      await exec('UPDATE channels SET credentials = ?::jsonb WHERE id = ?', [JSON.stringify(newCreds), channelId])
       log('token 刷新成功')
     } else {
       throw new Error(`刷新 token 失败: ${data.error_description || data.error}`)
@@ -79,20 +93,17 @@ function getHeader(msg: GmailMessage, name: string): string {
 function parseAddress(raw: string): { name: string; email: string } {
   const match = raw.match(/^"?(.+?)"?\s*<(.+?)>$/)
   if (match) return { name: match[1].trim(), email: match[2].trim() }
-  // 纯邮箱
   const emailOnly = raw.trim()
   return { name: emailOnly.split('@')[0], email: emailOnly }
 }
 
 function decodeBody(msg: GmailMessage): string {
-  // 尝试从 parts 里找 text/plain
   const parts = msg.payload.parts || []
   for (const part of parts) {
     if (part.mimeType === 'text/plain' && part.body?.data) {
       return Buffer.from(part.body.data, 'base64url').toString('utf-8').trim()
     }
   }
-  // 回退到 payload.body
   if (msg.payload.body?.data) {
     return Buffer.from(msg.payload.body.data, 'base64url').toString('utf-8').trim()
   }
@@ -140,14 +151,25 @@ export async function POST() {
 
   ;(async () => {
     try {
-      const token = await ensureToken()
-      const myEmailRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='gmail_email'`)
-      const myEmail = myEmailRow?.value || ''
+      // Get or create the gmail channel
+      const channel = await getOrCreateChannel(userId, 'gmail', 'Gmail')
+      const channelId = channel.id
 
-      // 获取上次同步时间
-      await exec(`CREATE TABLE IF NOT EXISTS email_sync_state (folder TEXT PRIMARY KEY, last_uid INTEGER DEFAULT 0)`)
-      const lastSyncRow = await queryOne<{ last_uid: number }>(`SELECT last_uid FROM email_sync_state WHERE folder='gmail_last_ts'`)
-      const lastSyncTs = lastSyncRow?.last_uid || 0
+      const token = await ensureToken(channelId)
+
+      // Get my email from channel credentials or settings (fallback)
+      const credRow = await queryOne<{ credentials: any }>('SELECT credentials FROM channels WHERE id = ?', [channelId])
+      const creds = credRow?.credentials || {}
+      let myEmail = creds.email || ''
+      if (!myEmail) {
+        const settingRow = await queryOne<{ value: string }>("SELECT value FROM settings WHERE key='gmail_email' AND user_id = ?", [userId])
+        myEmail = settingRow?.value || ''
+      }
+
+      // Get last sync timestamp from channels.sync_state
+      const syncStateRow = await queryOne<{ sync_state: any }>('SELECT sync_state FROM channels WHERE id = ?', [channelId])
+      const syncState = syncStateRow?.sync_state || {}
+      const lastSyncTs = parseInt(syncState.last_sync_ts || '0')
 
       // 构建查询：只拉上次同步后的邮件
       let gmailQuery = 'in:inbox OR in:sent'
@@ -160,20 +182,8 @@ export async function POST() {
       const msgIds = await fetchMessages(token, gmailQuery, 500)
       log(`找到 ${msgIds.length} 封邮件`)
 
-      await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id) WHERE source_id IS NOT NULL`)
-
-      const insertMsgSql = `
-        INSERT INTO messages(contact_name, direction, content, timestamp, source_id)
-        VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING
-      `
-      const upsertContactSql = `
-        INSERT INTO contacts(name, email, last_contact_at, message_count)
-        VALUES (?, ?, ?, 1)
-        ON CONFLICT(name) DO UPDATE SET
-          message_count = message_count + 1,
-          last_contact_at = CASE WHEN excluded.last_contact_at > last_contact_at THEN excluded.last_contact_at ELSE last_contact_at END,
-          email = CASE WHEN email IS NULL OR email = '' THEN excluded.email ELSE email END
-      `
+      // Thread cache: gmail threadId → our thread ID
+      const threadCache = new Map<string, number>()
 
       let imported = 0, skipped = 0
       let maxTs = lastSyncTs
@@ -187,13 +197,13 @@ export async function POST() {
           const ts = parseInt(msg.internalDate)
           const _d = new Date(ts), _p = (n: number) => String(n).padStart(2, '0')
           const timestamp = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`
-          const sourceId = `gmail:${msg.id}`
           const subject = getHeader(msg, 'Subject') || '(无主题)'
           const from = parseAddress(getHeader(msg, 'From'))
           const to = parseAddress(getHeader(msg, 'To'))
+          const cc = getHeader(msg, 'Cc')
 
           const isSent = (msg.labelIds || []).includes('SENT')
-          const direction = isSent ? 'sent' : 'received'
+          const direction: 'sent' | 'received' = isSent ? 'sent' : 'received'
           const contact = isSent ? to : from
 
           // 跳过自己发给自己的
@@ -206,12 +216,37 @@ export async function POST() {
             ? `[邮件] 主题: ${subject}\n${preview}`
             : `[邮件] 主题: ${subject}`
 
-          try {
-            await exec(insertMsgSql, [contact.name, direction, content, timestamp, sourceId])
-            await exec(upsertContactSql, [contact.name, contact.email, timestamp])
+          // Get or create thread (using Gmail threadId as platform_thread_id)
+          let threadId: number
+          if (threadCache.has(msg.threadId)) {
+            threadId = threadCache.get(msg.threadId)!
+          } else {
+            const thread = await getOrCreateThread(userId, channelId, msg.threadId, subject, 'email_thread')
+            threadId = thread.id
+            threadCache.set(msg.threadId, threadId)
+          }
+
+          // Get or create contact + identity
+          const contactRecord = await getOrCreateContact(userId, contact.name)
+          await getOrCreateContactIdentity(contactRecord.id, channelId, contact.email, contact.name, contact.email)
+
+          // Insert message
+          const inserted = await insertUnifiedMessage(userId, threadId, channelId, {
+            direction,
+            senderName: isSent ? '我' : contact.name,
+            content,
+            msgType: 'email',
+            timestamp,
+            platformMsgId: msg.id,
+            metadata: { subject, to: to.email, cc: cc || undefined, from: from.email },
+          })
+
+          if (inserted) {
             imported++
             newMsgsByContact[contact.name] = (newMsgsByContact[contact.name] || 0) + 1
-          } catch {
+            // Update contact stats
+            await updateContactStats(userId, contact.name, timestamp)
+          } else {
             skipped++
           }
 
@@ -224,27 +259,26 @@ export async function POST() {
         if (i > 0 && i % 20 === 0) await new Promise(r => setTimeout(r, 100))
       }
 
-      // 保存同步进度
+      // 保存同步进度到 channels.sync_state
       if (maxTs > lastSyncTs) {
-        await exec(`INSERT INTO email_sync_state(folder, last_uid) VALUES('gmail_last_ts', ?)
-          ON CONFLICT(folder) DO UPDATE SET last_uid=excluded.last_uid`, [maxTs])
+        const newSyncState = { ...syncState, last_sync_ts: maxTs.toString() }
+        await exec('UPDATE channels SET sync_state = ?::jsonb WHERE id = ?', [JSON.stringify(newSyncState), channelId])
       }
 
       // 统计需要摘要的联系人
       const SUMMARIZE_THRESHOLD = 5
       const needSummarize = Object.entries(newMsgsByContact).filter(([, n]) => n >= SUMMARIZE_THRESHOLD)
       if (needSummarize.length > 0) {
-        log(`\n📝 ${needSummarize.length} 个联系人有 ≥${SUMMARIZE_THRESHOLD} 条新邮件，需更新摘要`)
-        // 标记到数据库，MCP server 下次调用 get_summaries 时会发现过期
+        log(`\n${needSummarize.length} 个联系人有 >=${SUMMARIZE_THRESHOLD} 条新邮件，需更新摘要`)
         for (const [name, count] of needSummarize) {
           log(`  ${name}: ${count} 封新邮件`)
         }
       }
 
       lastResult = { imported, skipped, total: msgIds.length, needSummarize: needSummarize.length }
-      log(`\n✅ 同步完成: 导入 ${imported} 封，跳过 ${skipped} 封`)
+      log(`\n同步完成: 导入 ${imported} 封，跳过 ${skipped} 封`)
     } catch (e: any) {
-      log(`❌ ${e.message}`)
+      log(`同步失败: ${e.message}`)
       lastResult = { error: e.message }
     } finally {
       syncRunning = false

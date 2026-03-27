@@ -1,4 +1,4 @@
-// GET /api/search — 搜索消息（移植自 MCP search_messages）
+// GET /api/search — 搜索消息（统一多平台模型）
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -17,15 +17,19 @@ export async function GET(req: NextRequest) {
 
   const results = contactName
     ? await query(`
-        SELECT contact_name, direction, content, timestamp
-        FROM messages WHERE contact_name = ? AND content LIKE ? AND user_id = ?
-        ORDER BY timestamp DESC LIMIT ?
-      `, [contactName, `%${keyword}%`, userId, limit])
+        SELECT t.name as contact_name, m.direction, m.content, m.timestamp
+        FROM messages m
+        JOIN threads t ON m.thread_id = t.id AND t.user_id = ?
+        WHERE t.name = ? AND m.content LIKE ? AND m.user_id = ?
+        ORDER BY m.timestamp DESC LIMIT ?
+      `, [userId, contactName, `%${keyword}%`, userId, limit])
     : await query(`
-        SELECT contact_name, direction, content, timestamp
-        FROM messages WHERE content LIKE ? AND user_id = ?
-        ORDER BY timestamp DESC LIMIT ?
-      `, [`%${keyword}%`, userId, limit])
+        SELECT t.name as contact_name, m.direction, m.content, m.timestamp
+        FROM messages m
+        JOIN threads t ON m.thread_id = t.id AND t.user_id = ?
+        WHERE m.content LIKE ? AND m.user_id = ?
+        ORDER BY m.timestamp DESC LIMIT ?
+      `, [userId, `%${keyword}%`, userId, limit])
 
   return NextResponse.json({ results })
 }

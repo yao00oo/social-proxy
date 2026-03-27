@@ -1,4 +1,4 @@
-// POST /api/draft — AI 生成消息草稿（通过 OpenRouter）
+// POST /api/draft — AI 生成消息草稿（通过 OpenRouter）（统一多平台模型）
 import { NextRequest } from 'next/server'
 import { query, queryOne } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -31,14 +31,20 @@ export async function POST(req: NextRequest) {
 
   // Get recent messages for context
   const recentMsgs = await query<any>(`
-    SELECT direction, content, timestamp FROM messages
-    WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 10
-  `, [contactName || '', userId])
+    SELECT m.direction, m.content, m.timestamp
+    FROM messages m
+    JOIN threads t ON m.thread_id = t.id AND t.user_id = ?
+    WHERE t.name = ? AND m.user_id = ?
+    ORDER BY m.timestamp DESC LIMIT 10
+  `, [userId, contactName || '', userId])
 
   // Get summary
   const summaryRow = await queryOne<{ summary: string }>(
-    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL`,
-    [contactName || '', userId]
+    `SELECT s.summary
+     FROM summaries s
+     JOIN threads t ON s.thread_id = t.id AND t.user_id = ?
+     WHERE t.name = ? AND s.user_id = ? AND s.summary IS NOT NULL`,
+    [userId, contactName || '', userId]
   )
 
   const context = [

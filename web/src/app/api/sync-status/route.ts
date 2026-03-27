@@ -1,4 +1,4 @@
-// GET /api/sync-status — 返回所有数据源的同步状态（实时）
+// GET /api/sync-status — 返回所有数据源的同步状态（统一多平台模型）
 import { NextResponse } from 'next/server'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 import { queryOne, query } from '@/lib/db'
@@ -19,13 +19,23 @@ export async function GET() {
   )
   const feishuAuthed = feishuAuthRow?.value === '1'
 
-  // 飞书同步统计
-  const feishuStats = await queryOne<{ synced: string; total: string }>(
-    `SELECT
-       (SELECT COUNT(*) FROM feishu_sync_state WHERE user_id = ? AND last_sync_ts != '0') as synced,
-       (SELECT COUNT(*) FROM feishu_sync_state WHERE user_id = ?) as total`,
-    [userId, userId]
+  // 飞书同步统计：通过 channels + threads 计算
+  const feishuChannel = await queryOne<{ id: number }>(
+    `SELECT id FROM channels WHERE platform = 'feishu' AND user_id = ? LIMIT 1`, [userId]
   )
+
+  let syncedChats = 0
+  let totalChats = 0
+  if (feishuChannel) {
+    const feishuStats = await queryOne<{ synced: string; total: string }>(
+      `SELECT
+         (SELECT COUNT(*) FROM threads WHERE channel_id = ? AND user_id = ? AND last_sync_ts IS NOT NULL AND last_sync_ts != '0') as synced,
+         (SELECT COUNT(*) FROM threads WHERE channel_id = ? AND user_id = ?) as total`,
+      [feishuChannel.id, userId, feishuChannel.id, userId]
+    )
+    syncedChats = parseInt(feishuStats?.synced || '0')
+    totalChats = parseInt(feishuStats?.total || '0')
+  }
 
   // 总体数据统计
   const counts = await queryOne<{ messages: string; contacts: string }>(
@@ -45,8 +55,8 @@ export async function GET() {
       running: feishu?.running || false,
       log: feishu?.log || [],
       lastResult: feishu?.lastResult || null,
-      syncedChats: parseInt(feishuStats?.synced || '0'),
-      totalChats: parseInt(feishuStats?.total || '0'),
+      syncedChats,
+      totalChats,
       authed: feishuAuthed,
       updatedAt: feishu?.updatedAt || null,
     },

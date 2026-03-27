@@ -1,4 +1,4 @@
-// GET /api/context/[name] — 联系人上下文（从 summaries 表读取）
+// GET /api/context/[name] — 联系人上下文（统一多平台模型）
 import { NextRequest, NextResponse } from 'next/server'
 import { queryOne } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -26,7 +26,10 @@ export async function GET(
   }
 
   const summaryRow = await queryOne<{ summary: string }>(
-    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL`, [name, userId]
+    `SELECT s.summary
+     FROM summaries s
+     JOIN threads t ON s.thread_id = t.id AND t.user_id = ?
+     WHERE t.name = ? AND s.user_id = ? AND s.summary IS NOT NULL`, [userId, name, userId]
   )
 
   return NextResponse.json({

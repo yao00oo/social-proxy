@@ -8,6 +8,16 @@ import { NextResponse } from 'next/server'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 import { getSetting } from '@/lib/feishu'
 import { query, queryOne, exec } from '@/lib/db'
+import {
+  getOrCreateChannel,
+  getOrCreateThread,
+  updateThreadSyncTs,
+  getOrCreateContact,
+  updateContactStats,
+  getOrCreateContactIdentity,
+  insertUnifiedMessage,
+  buildSenderNameCache,
+} from '@/lib/sync-helpers'
 import https from 'https'
 
 // ── Module-level state ──
@@ -212,7 +222,6 @@ async function listChats(userToken: string): Promise<Array<{ chat_id: string; na
 interface FeishuMessage {
   message_id: string
   sender_id: string
-  sender_name: string
   chat_id: string
   create_time: string
   msg_type: string
@@ -250,7 +259,6 @@ async function listMessages(
       messages.push({
         message_id: item.message_id,
         sender_id: item.sender?.id || '',
-        sender_name: item.sender?.name || item.sender?.id || '未知',
         chat_id: chatId,
         create_time: item.create_time,
         msg_type: item.msg_type,
@@ -264,6 +272,57 @@ async function listMessages(
   }
 
   return messages
+}
+
+// ── Process messages for a single chat (shared by fullSync and retry) ──
+async function processChatMessages(
+  userId: string,
+  channelId: number,
+  threadId: number,
+  msgs: FeishuMessage[],
+  lastTs: string,
+  myUserId: string | undefined,
+  senderNameCache: Map<string, string>,
+  myName: string | undefined,
+): Promise<{ imported: number; newTs: string }> {
+  let newTs = lastTs
+  let imported = 0
+
+  for (const msg of msgs) {
+    const ts = toLocalTime(parseInt(msg.create_time))
+    const isSelf = msg.sender_id === myUserId
+    const direction = isSelf ? 'sent' : 'received'
+    const senderDisplay = isSelf ? (myName || '我') : (senderNameCache.get(msg.sender_id) || msg.sender_id || '未知')
+
+    // Resolve sender contact + identity for non-self messages
+    let senderIdentityId: number | undefined
+    if (!isSelf && msg.sender_id) {
+      const contactName = senderNameCache.get(msg.sender_id) || msg.sender_id
+      const contact = await getOrCreateContact(userId, contactName)
+      const identity = await getOrCreateContactIdentity(
+        contact.id, channelId, msg.sender_id, senderDisplay,
+      )
+      senderIdentityId = identity.id
+      await updateContactStats(userId, contactName, ts)
+    }
+
+    // Insert unified message
+    await insertUnifiedMessage(userId, threadId, channelId, {
+      direction,
+      senderName: senderDisplay,
+      senderIdentityId,
+      content: msg.content,
+      msgType: msg.msg_type,
+      timestamp: ts,
+      platformMsgId: msg.message_id,
+      metadata: msg.parent_id ? { parent_id: msg.parent_id } : {},
+    })
+
+    imported++
+    if (msg.create_time > newTs) newTs = msg.create_time
+  }
+
+  return { imported, newTs }
 }
 
 // ── Full sync ──
@@ -291,52 +350,40 @@ async function fullSync(userId: string) {
     const myName = await getSetting('feishu_user_name', userId)
     const myUserId = await getSetting('feishu_user_id', userId)
 
-    // 0. Build sender name cache from feishu_users
-    const senderNameCache = new Map<string, string>()
-    const cachedUsers = await query<{ open_id: string; name: string }>(
-      'SELECT open_id, name FROM feishu_users WHERE user_id = ?', [userId]
-    )
-    for (const u of cachedUsers) senderNameCache.set(u.open_id, u.name)
+    // 0. Get or create the feishu channel
+    const channel = await getOrCreateChannel(userId, 'feishu', 'Feishu')
+    const channelId = channel.id
 
-    function resolveSenderName(senderId: string, isSelf: boolean): string {
-      if (isSelf) return myName || '我'
-      return senderNameCache.get(senderId) || senderId || '未知'
-    }
+    // 1. Build sender name cache from contact_identities
+    const senderNameCache = await buildSenderNameCache(userId, channelId)
 
-    // 1. List all chats
+    // 2. List all chats
     log('获取会话列表...')
     const chats = await listChats(userToken)
     result.chats = chats.length
     log(`共 ${chats.length} 个会话`)
 
-    // 2. Upsert sync state for all chats
+    // 3. Upsert threads for all chats
+    const threadMap = new Map<string, { id: number; last_sync_ts: string }>()
     for (const chat of chats) {
-      await exec(
-        `INSERT INTO feishu_sync_state (user_id, chat_id, chat_name, chat_type)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT (user_id, chat_id) DO UPDATE SET chat_name = EXCLUDED.chat_name, chat_type = EXCLUDED.chat_type`,
-        [userId, chat.chat_id, chat.name, chat.chat_type],
-      )
+      const chatType = chat.chat_type === 'p2p' ? 'dm' : 'group'
+      const thread = await getOrCreateThread(userId, channelId, chat.chat_id, chat.name, chatType)
+      threadMap.set(chat.chat_id, thread)
     }
 
-    // 3. Sync chats in API order (ByActiveTimeDesc — most recently active first)
-    const syncStates = await query<{ chat_id: string; last_sync_ts: string }>(
-      `SELECT chat_id, last_sync_ts FROM feishu_sync_state WHERE user_id = ?`,
-      [userId],
-    )
-    const stateMap = new Map(syncStates.map(s => [s.chat_id, s.last_sync_ts]))
-
+    // 4. Sync chats in API order (ByActiveTimeDesc — most recently active first)
     let chatIndex = 0
     for (const chat of chats) {
       // Check timeout — stop early if approaching Vercel limit
       if (Date.now() - startTime > TIMEOUT_MS) {
         result.remaining = chats.length - chatIndex
-        log(`⏱ 接近超时，已处理 ${chatIndex} 个会话，剩余 ${result.remaining} 个`)
+        log(`接近超时，已处理 ${chatIndex} 个会话，剩余 ${result.remaining} 个`)
         break
       }
       chatIndex++
 
-      const lastTs = stateMap.get(chat.chat_id) || '0'
+      const thread = threadMap.get(chat.chat_id)!
+      const lastTs = thread.last_sync_ts || '0'
       const msgStartTime = lastTs !== '0'
         ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
         : undefined
@@ -353,60 +400,12 @@ async function fullSync(userId: string) {
           continue
         }
 
-        let newTs = lastTs
-        let chatImported = 0
-
-        for (const msg of msgs) {
-          const ts = toLocalTime(parseInt(msg.create_time))
-          const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
-          const direction = isSelf ? 'sent' : 'received'
-          const contactName = chat.chat_type === 'p2p' ? chat.name : chat.name
-          const senderDisplay = resolveSenderName(msg.sender_id, isSelf)
-
-          // Insert message (ON CONFLICT DO NOTHING for dedup by source_id)
-          await exec(
-            `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (user_id, source_id) DO NOTHING`,
-            [userId, contactName, direction, msg.content, ts, msg.message_id, senderDisplay],
-          )
-
-          // Upsert contact for received messages
-          if (!isSelf) {
-            await exec(
-              `INSERT INTO contacts (user_id, name, feishu_open_id, last_contact_at, message_count)
-               VALUES (?, ?, ?, ?, 1)
-               ON CONFLICT (user_id, name) DO UPDATE SET
-                 feishu_open_id  = COALESCE(EXCLUDED.feishu_open_id, contacts.feishu_open_id),
-                 message_count   = contacts.message_count + 1,
-                 last_contact_at = CASE
-                   WHEN EXCLUDED.last_contact_at > contacts.last_contact_at THEN EXCLUDED.last_contact_at
-                   ELSE contacts.last_contact_at
-                 END`,
-              [userId, contactName, msg.sender_id || null, ts],
-            )
-
-            // Upsert feishu_users
-            const resolvedName = senderNameCache.get(msg.sender_id)
-            if (msg.sender_id && resolvedName && !resolvedName.startsWith('ou_')) {
-              await exec(
-                `INSERT INTO feishu_users (user_id, open_id, name)
-                 VALUES (?, ?, ?)
-                 ON CONFLICT (user_id, open_id) DO UPDATE SET name = EXCLUDED.name`,
-                [userId, msg.sender_id, resolvedName],
-              )
-            }
-          }
-
-          chatImported++
-          if (msg.create_time > newTs) newTs = msg.create_time
-        }
-
-        // Update sync state
-        await exec(
-          `UPDATE feishu_sync_state SET last_sync_ts = ? WHERE user_id = ? AND chat_id = ?`,
-          [newTs, userId, chat.chat_id],
+        const { imported: chatImported, newTs } = await processChatMessages(
+          userId, channelId, thread.id, msgs, lastTs, myUserId, senderNameCache, myName,
         )
+
+        // Update thread sync ts
+        await updateThreadSyncTs(thread.id, newTs)
 
         result.imported += chatImported
         lastResult = { ...result } // update incrementally for realtime progress
@@ -418,53 +417,12 @@ async function fullSync(userId: string) {
             userToken = await ensureValidToken(userId)
             // Retry this chat
             const retryMsgs = await listMessages(userToken, chat.chat_id, msgStartTime)
-            let retryTs = lastTs
-            let retryImported = 0
-            for (const msg of retryMsgs) {
-              const ts = toLocalTime(parseInt(msg.create_time))
-              const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
-              const direction = isSelf ? 'sent' : 'received'
-              const contactName = chat.name
-              const senderDisplay = resolveSenderName(msg.sender_id, isSelf)
-
-              await exec(
-                `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT (user_id, source_id) DO NOTHING`,
-                [userId, contactName, direction, msg.content, ts, msg.message_id, senderDisplay],
-              )
-              if (!isSelf) {
-                await exec(
-                  `INSERT INTO contacts (user_id, name, feishu_open_id, last_contact_at, message_count)
-                   VALUES (?, ?, ?, ?, 1)
-                   ON CONFLICT (user_id, name) DO UPDATE SET
-                     feishu_open_id  = COALESCE(EXCLUDED.feishu_open_id, contacts.feishu_open_id),
-                     message_count   = contacts.message_count + 1,
-                     last_contact_at = CASE
-                       WHEN EXCLUDED.last_contact_at > contacts.last_contact_at THEN EXCLUDED.last_contact_at
-                       ELSE contacts.last_contact_at
-                     END`,
-                  [userId, contactName, msg.sender_id || null, ts],
-                )
-                const resolvedName = senderNameCache.get(msg.sender_id)
-            if (msg.sender_id && resolvedName && !resolvedName.startsWith('ou_')) {
-                  await exec(
-                    `INSERT INTO feishu_users (user_id, open_id, name)
-                     VALUES (?, ?, ?)
-                     ON CONFLICT (user_id, open_id) DO UPDATE SET name = EXCLUDED.name`,
-                    [userId, msg.sender_id, resolvedName],
-                  )
-                }
-              }
-              retryImported++
-              if (msg.create_time > retryTs) retryTs = msg.create_time
-            }
-            await exec(
-              `UPDATE feishu_sync_state SET last_sync_ts = ? WHERE user_id = ? AND chat_id = ?`,
-              [retryTs, userId, chat.chat_id],
+            const { imported: retryImported, newTs: retryTs } = await processChatMessages(
+              userId, channelId, thread.id, retryMsgs, lastTs, myUserId, senderNameCache, myName,
             )
+            await updateThreadSyncTs(thread.id, retryTs)
             result.imported += retryImported
-            lastResult = { ...result } // update incrementally for realtime progress
+            lastResult = { ...result }
             log(`    -> 重试成功，导入 ${retryImported} 条`)
           } catch (retryErr: any) {
             result.errors.push(`${chat.name}: 重试失败 ${retryErr.message}`)
@@ -517,30 +475,25 @@ async function quickSync(userId: string) {
     const myName = await getSetting('feishu_user_name', userId)
     const myUserId = await getSetting('feishu_user_id', userId)
 
-    // Build sender name cache
-    const senderNameCache = new Map<string, string>()
-    const cachedUsers = await query<{ open_id: string; name: string }>(
-      'SELECT open_id, name FROM feishu_users WHERE user_id = ?', [userId]
-    )
-    for (const u of cachedUsers) senderNameCache.set(u.open_id, u.name)
+    // Get or create the feishu channel
+    const channel = await getOrCreateChannel(userId, 'feishu', 'Feishu')
+    const channelId = channel.id
 
-    function resolveSenderName(senderId: string, isSelf: boolean): string {
-      if (isSelf) return myName || '我'
-      return senderNameCache.get(senderId) || senderId || '未知'
-    }
+    // Build sender name cache from contact_identities
+    const senderNameCache = await buildSenderNameCache(userId, channelId)
 
-    // Only check chats active in last 90 days
+    // Only check threads active in last 90 days
     const since = String(Date.now() - 90 * 24 * 60 * 60 * 1000)
-    const activeChats = await query<{ chat_id: string; chat_name: string; chat_type: string; last_sync_ts: string }>(
-      `SELECT chat_id, chat_name, chat_type, last_sync_ts
-       FROM feishu_sync_state
-       WHERE user_id = ? AND (last_sync_ts > ? OR last_sync_ts = '0')
+    const activeThreads = await query<{ id: number; platform_thread_id: string; name: string; type: string; last_sync_ts: string }>(
+      `SELECT id, platform_thread_id, name, type, last_sync_ts
+       FROM threads
+       WHERE user_id = ? AND channel_id = ? AND (last_sync_ts > ? OR last_sync_ts = '0')
        ORDER BY last_sync_ts DESC
        LIMIT 500`,
-      [userId, since],
+      [userId, channelId, since],
     )
 
-    if (activeChats.length === 0) {
+    if (activeThreads.length === 0) {
       log('快速同步: 无活跃会话')
       return
     }
@@ -548,51 +501,18 @@ async function quickSync(userId: string) {
     let imported = 0
     let errors = 0
 
-    for (const chat of activeChats) {
+    for (const thread of activeThreads) {
       try {
-        const startTime = String(Math.floor((parseInt(chat.last_sync_ts) - 1000) / 1000))
-        const msgs = await listMessages(userToken, chat.chat_id, startTime)
+        const startTime = String(Math.floor((parseInt(thread.last_sync_ts) - 1000) / 1000))
+        const msgs = await listMessages(userToken, thread.platform_thread_id, startTime)
         if (msgs.length === 0) continue
 
-        let newTs = chat.last_sync_ts
-
-        for (const msg of msgs) {
-          const ts = toLocalTime(parseInt(msg.create_time))
-          const isSelf = msg.sender_id === myUserId || msg.sender_name === myName
-          const direction = isSelf ? 'sent' : 'received'
-          const contactName = chat.chat_name
-          const senderDisplay = resolveSenderName(msg.sender_id, isSelf)
-
-          await exec(
-            `INSERT INTO messages (user_id, contact_name, direction, content, timestamp, source_id, sender_name)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT (user_id, source_id) DO NOTHING`,
-            [userId, contactName, direction, msg.content, ts, msg.message_id, senderDisplay],
-          )
-
-          if (!isSelf) {
-            await exec(
-              `INSERT INTO contacts (user_id, name, feishu_open_id, last_contact_at, message_count)
-               VALUES (?, ?, ?, ?, 1)
-               ON CONFLICT (user_id, name) DO UPDATE SET
-                 feishu_open_id  = COALESCE(EXCLUDED.feishu_open_id, contacts.feishu_open_id),
-                 message_count   = contacts.message_count + 1,
-                 last_contact_at = CASE
-                   WHEN EXCLUDED.last_contact_at > contacts.last_contact_at THEN EXCLUDED.last_contact_at
-                   ELSE contacts.last_contact_at
-                 END`,
-              [userId, contactName, msg.sender_id || null, ts],
-            )
-          }
-
-          imported++
-          if (msg.create_time > newTs) newTs = msg.create_time
-        }
-
-        await exec(
-          `UPDATE feishu_sync_state SET last_sync_ts = ? WHERE user_id = ? AND chat_id = ?`,
-          [newTs, userId, chat.chat_id],
+        const { imported: chatImported, newTs } = await processChatMessages(
+          userId, channelId, thread.id, msgs, thread.last_sync_ts, myUserId, senderNameCache, myName,
         )
+
+        await updateThreadSyncTs(thread.id, newTs)
+        imported += chatImported
       } catch (err: any) {
         if (err instanceof TokenExpiredError) {
           try { userToken = await ensureValidToken(userId) } catch { /* ignore */ }
@@ -665,9 +585,10 @@ export async function POST(req: Request) {
     syncRunning = true
     syncLog = ['重置数据，准备重新全量同步...']
     try {
+      // Delete messages, contacts, threads for this user
       await exec('DELETE FROM messages WHERE user_id = ?', [userId])
       await exec('DELETE FROM contacts WHERE user_id = ?', [userId])
-      await exec("UPDATE feishu_sync_state SET last_sync_ts = '0' WHERE user_id = ?", [userId])
+      await exec('DELETE FROM threads WHERE user_id = ?', [userId])
       syncLog.push('已清空旧数据，开始全量同步...')
       await fullSync(userId)
       return NextResponse.json({ ok: true, message: '重置同步完成', result: lastResult })

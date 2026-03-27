@@ -1,4 +1,4 @@
-// GET /api/contacts — 联系人列表（移植自 MCP get_contacts）
+// GET /api/contacts — 联系人列表（统一多平台模型）
 import { NextRequest, NextResponse } from 'next/server'
 import { query, queryOne } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
   const contacts = await query(`
     SELECT
-      name, email, phone, feishu_open_id, last_contact_at, message_count,
+      name, avatar, tags, last_contact_at, message_count,
       CASE
         WHEN last_contact_at IS NULL THEN 9999
         ELSE EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer

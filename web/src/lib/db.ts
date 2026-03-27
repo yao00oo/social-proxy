@@ -38,34 +38,75 @@ export async function exec(sql: string, params: any[] = []): Promise<void> {
 }
 
 // ── Types ──
-export interface Contact {
+
+export interface Channel {
+  id: number
+  user_id: string
+  platform: string
   name: string
-  email: string | null
-  phone: string | null
-  feishu_open_id: string | null
-  last_contact_at: string | null
-  message_count: number
-  days_since_last_contact: number
+  credentials: Record<string, any> | null
+  sync_state: Record<string, any> | null
+}
+
+export interface Thread {
+  id: number
+  user_id: string
+  channel_id: number
+  platform_thread_id: string
+  name: string | null
+  type: string | null
+  participants: Array<{ identity_id: number; name: string }> | null
+  last_message_at: string | null
+  last_sync_ts: string | null
 }
 
 export interface Message {
   id: number
-  contact_name: string
+  user_id: string
+  thread_id: number
+  channel_id: number
   direction: 'sent' | 'received'
+  sender_identity_id: number | null
+  sender_name: string | null
   content: string
+  msg_type: string | null
   timestamp: string
-  source_id: string | null
+  platform_msg_id: string | null
+  is_read: number
+  metadata: Record<string, any> | null
 }
 
-export interface NewMessage {
+export interface Contact {
   id: number
-  message_id: string | null
-  contact_name: string
-  incoming_content: string
-  created_at: string
-  is_at_me: boolean
-  is_read: boolean
-  suggestion: string | null
+  user_id: string
+  name: string
+  avatar: string | null
+  tags: string[] | null
+  notes: string | null
+  last_contact_at: string | null
+  message_count: number
+  merged_into: number | null
+}
+
+export interface ContactIdentity {
+  id: number
+  contact_id: number
+  channel_id: number
+  platform_uid: string
+  display_name: string | null
+  email: string | null
+  phone: string | null
+  metadata: Record<string, any> | null
+}
+
+export interface Summary {
+  id: number
+  user_id: string
+  thread_id: number
+  summary: string | null
+  start_time: string | null
+  end_time: string | null
+  message_count: number | null
 }
 
 export { schema }

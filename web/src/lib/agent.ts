@@ -51,7 +51,7 @@ const SYSTEM_PROMPT = `你是"小林"，用户的私人社交助理。
 
 当前时间：${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`
 
-// Fuzzy contact name resolver
+// Fuzzy contact name resolver — searches contacts table, prefers "(私聊)" suffix
 async function resolveContactName(name: string, userId: string): Promise<string> {
   const exact = await queryOne<{ name: string }>('SELECT name FROM contacts WHERE name = ? AND user_id = ?', [name, userId])
   if (exact) return exact.name
@@ -63,6 +63,17 @@ async function resolveContactName(name: string, userId: string): Promise<string>
     [name, userId]
   )
   return candidates[0]?.name || name
+}
+
+// Resolve contact_name to matching thread IDs
+async function resolveThreadIds(contactName: string, userId: string): Promise<number[]> {
+  const threads = await query<{ id: number }>(
+    `SELECT id FROM threads WHERE name LIKE '%' || ? || '%' AND user_id = ? ORDER BY
+      CASE WHEN name LIKE '% (私聊)' THEN 0 ELSE 1 END,
+      length(name) ASC LIMIT 10`,
+    [contactName, userId]
+  )
+  return threads.map(t => t.id)
 }
 
 // Tools factory — captures userId for multi-tenant DB queries
@@ -81,7 +92,7 @@ function createTools(userId: string): Record<string, any> {
         : `WHERE user_id = ?`
       const params: any[] = search ? [userId, search] : [userId]
       const rows = await query(`
-        SELECT name, email, phone, last_contact_at, message_count,
+        SELECT name, avatar, tags, notes, last_contact_at, message_count,
           CASE WHEN last_contact_at IS NULL THEN 9999
             ELSE CAST(EXTRACT(EPOCH FROM NOW() - last_contact_at::timestamp) / 86400 AS INTEGER)
           END AS days_since
@@ -104,30 +115,45 @@ function createTools(userId: string): Record<string, any> {
       const lim = limit ?? 30
       if (!contact_name) return { error: '请提供联系人姓名', total: 0, messages: [] }
 
-      // 先精确匹配，再模糊匹配（优先私聊）
-      let actualName = contact_name
-      const exact = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?', [contact_name, userId])
-      if (exact?.n === 0) {
-        // 模糊搜索，优先"xxx (私聊)"，其次短名的群聊
-        const candidates = await query<{ name: string; message_count: number }>(
-          `SELECT name, message_count FROM contacts WHERE name LIKE '%' || ? || '%' AND user_id = ? ORDER BY
-            CASE WHEN name LIKE '% (私聊)' THEN 0 ELSE 1 END,
-            length(name) ASC LIMIT 5`,
-          [contact_name, userId]
-        )
-        if (candidates.length > 0) {
-          actualName = candidates[0].name
-        }
+      // Find matching threads (conversation name matches contact name)
+      const threads = await query<{ id: number; name: string }>(
+        `SELECT id, name FROM threads WHERE name LIKE '%' || ? || '%' AND user_id = ? ORDER BY
+          CASE WHEN name LIKE '% (私聊)' THEN 0 ELSE 1 END,
+          length(name) ASC LIMIT 5`,
+        [contact_name, userId]
+      )
+      const actualName = threads[0]?.name || contact_name
+      const threadIds = threads.map(t => t.id)
+
+      if (threadIds.length === 0) {
+        return { matched_name: contact_name, searched_name: contact_name, total: 0, messages: [], summary: null }
       }
 
-      const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?', [actualName, userId])
+      // Build placeholders for IN clause
+      const placeholders = threadIds.map(() => '?').join(',')
+
+      const totalRow = await queryOne<{ n: number }>(
+        `SELECT COUNT(*) as n FROM messages WHERE thread_id IN (${placeholders}) AND user_id = ?`,
+        [...threadIds, userId]
+      )
       const total = totalRow?.n ?? 0
+
       const messages = await query(`
-        SELECT direction, content, timestamp FROM (
-          SELECT direction, content, timestamp FROM messages WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT ?
+        SELECT direction, sender_name, content, timestamp FROM (
+          SELECT direction, sender_name, content, timestamp FROM messages
+          WHERE thread_id IN (${placeholders}) AND user_id = ?
+          ORDER BY timestamp DESC LIMIT ?
         ) sub ORDER BY timestamp ASC
-      `, [actualName, userId, lim])
-      const summaryRow = await queryOne<{ summary: string; start_time: string; end_time: string }>('SELECT summary, start_time, end_time FROM chat_summaries WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL', [actualName, userId])
+      `, [...threadIds, userId, lim])
+
+      // Get summary from summaries table joined with threads
+      const summaryRow = await queryOne<{ summary: string; start_time: string; end_time: string }>(
+        `SELECT s.summary, s.start_time, s.end_time FROM summaries s
+         JOIN threads t ON s.thread_id = t.id
+         WHERE t.id IN (${placeholders}) AND s.user_id = ? AND s.summary IS NOT NULL
+         ORDER BY s.end_time DESC LIMIT 1`,
+        [...threadIds, userId]
+      )
 
       return {
         matched_name: actualName,
@@ -147,9 +173,10 @@ function createTools(userId: string): Record<string, any> {
     execute: async ({ search }: { search?: string }) => {
       const params: any[] = search ? [userId, `%${search}%`, `%${search}%`] : [userId]
       const rows = await query(`
-        SELECT chat_name, start_time, end_time, message_count, summary FROM chat_summaries
-        WHERE summary IS NOT NULL AND user_id = ? ${search ? 'AND (chat_name LIKE ? OR summary LIKE ?)' : ''}
-        ORDER BY end_time DESC LIMIT 20
+        SELECT t.name as thread_name, s.start_time, s.end_time, s.message_count, s.summary
+        FROM summaries s JOIN threads t ON s.thread_id = t.id
+        WHERE s.summary IS NOT NULL AND s.user_id = ? ${search ? 'AND (t.name LIKE ? OR s.summary LIKE ?)' : ''}
+        ORDER BY s.end_time DESC LIMIT 20
       `, params)
       return { summaries: rows }
     },
@@ -164,10 +191,31 @@ function createTools(userId: string): Record<string, any> {
     }),
     execute: async ({ keyword, contact_name, limit }: { keyword: string; contact_name?: string; limit?: number }) => {
       const lim = Math.min(limit ?? 20, 50)
-      const rows = contact_name
-        ? await query('SELECT contact_name, direction, content, timestamp FROM messages WHERE contact_name = ? AND user_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT ?', [contact_name, userId, `%${keyword}%`, lim])
-        : await query('SELECT contact_name, direction, content, timestamp FROM messages WHERE user_id = ? AND content LIKE ? ORDER BY timestamp DESC LIMIT ?', [userId, `%${keyword}%`, lim])
-      return { count: rows.length, results: rows }
+      if (contact_name) {
+        // Find threads matching the contact name, then search messages in those threads
+        const threadIds = await resolveThreadIds(contact_name, userId)
+        if (threadIds.length === 0) {
+          return { count: 0, results: [] }
+        }
+        const placeholders = threadIds.map(() => '?').join(',')
+        const rows = await query(
+          `SELECT t.name as thread_name, m.direction, m.sender_name, m.content, m.timestamp
+           FROM messages m JOIN threads t ON m.thread_id = t.id
+           WHERE m.thread_id IN (${placeholders}) AND m.user_id = ? AND m.content LIKE ?
+           ORDER BY m.timestamp DESC LIMIT ?`,
+          [...threadIds, userId, `%${keyword}%`, lim]
+        )
+        return { count: rows.length, results: rows }
+      } else {
+        const rows = await query(
+          `SELECT t.name as thread_name, m.direction, m.sender_name, m.content, m.timestamp
+           FROM messages m JOIN threads t ON m.thread_id = t.id
+           WHERE m.user_id = ? AND m.content LIKE ?
+           ORDER BY m.timestamp DESC LIMIT ?`,
+          [userId, `%${keyword}%`, lim]
+        )
+        return { count: rows.length, results: rows }
+      }
     },
   },
 
@@ -194,37 +242,45 @@ function createTools(userId: string): Record<string, any> {
   },
 
   get_new_messages: {
-    description: '获取最近收到的新消息（含每条消息的聊天上下文、是否@我、AI 建议回复）。用于了解最近发生了什么、谁需要回复。',
+    description: '获取最近收到的新消息（含每条消息的聊天上下文）。用于了解最近发生了什么、谁需要回复。',
     parameters: z.object({
       minutes: z.number().optional().describe('时间窗口（分钟），默认60'),
       limit: z.number().optional().describe('返回条数，默认50'),
     }),
     execute: async ({ minutes, limit }: { minutes?: number; limit?: number }) => {
       const rows = await query<any>(`
-        SELECT m.id, m.source_id as message_id, m.contact_name, m.content as incoming_content, m.timestamp as created_at,
-          COALESCE(r.is_at_me, 0) as is_at_me, COALESCE(r.is_read, 0) as is_read, r.suggestion
-        FROM messages m LEFT JOIN reply_suggestions r ON m.source_id = r.message_id
-        WHERE m.timestamp::timestamp > NOW() - (? || ' minutes')::interval AND m.direction = 'received' AND m.user_id = ?
+        SELECT m.id, m.platform_msg_id as message_id, t.name as thread_name, t.type as thread_type,
+          m.sender_name, m.content as incoming_content, m.timestamp as created_at,
+          COALESCE(m.is_read, 0) as is_read, m.metadata
+        FROM messages m
+        JOIN threads t ON m.thread_id = t.id
+        WHERE m.timestamp::timestamp > NOW() - (? || ' minutes')::interval
+          AND m.direction = 'received' AND m.user_id = ?
         ORDER BY m.timestamp ASC LIMIT ?
       `, [minutes ?? 60, userId, Math.min(limit ?? 50, 100)])
 
-      // Add recent_history context for each message (like MCP version)
-      const msgs = await Promise.all(rows.map(async row => {
+      // Add recent_history context for each message
+      const msgs = await Promise.all(rows.map(async (row: any) => {
         const history = await query<any>(`
-          SELECT direction, content, timestamp FROM messages
-          WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 10
-        `, [row.contact_name, userId])
+          SELECT direction, sender_name, content, timestamp FROM messages
+          WHERE thread_id = (SELECT thread_id FROM messages WHERE id = ?) AND user_id = ?
+          ORDER BY timestamp DESC LIMIT 10
+        `, [row.id, userId])
+
+        // Check if user was mentioned (look in metadata for mentions)
+        const metadata = row.metadata || {}
+        const isAtMe = !!(metadata.mentions && metadata.mentions.length > 0)
+
         return {
           ...row,
-          is_at_me: !!row.is_at_me,
+          is_at_me: isAtMe,
           is_read: !!row.is_read,
-          suggestion: row.suggestion || null,
           recent_history: history.reverse(),
         }
       }))
 
-      const unread = msgs.filter(m => !m.is_read).length
-      const atMe = msgs.filter(m => m.is_at_me).length
+      const unread = msgs.filter((m: any) => !m.is_read).length
+      const atMe = msgs.filter((m: any) => m.is_at_me).length
       return { count: msgs.length, unread, atMe, messages: msgs }
     },
   },
@@ -236,7 +292,7 @@ function createTools(userId: string): Record<string, any> {
       limit: z.number().optional().describe('返回数量，默认20'),
     }),
     execute: async ({ topic, limit }: { topic?: number; limit?: number }) => {
-      // Need feishu user token for approvals
+      // Get feishu user_id from contact_identities via a feishu channel
       const feishuUserRow = await queryOne<{ value: string }>("SELECT value FROM settings WHERE key = 'feishu_user_id' AND user_id = ?", [userId])
       const feishuUserId = feishuUserRow?.value
       if (!feishuUserId) return { tasks: [], message: '未设置飞书用户ID，无法查询审批' }

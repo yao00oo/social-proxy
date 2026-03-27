@@ -1,4 +1,4 @@
-// GET /api/contacts/[name] — 联系人详情 + 聊天记录
+// GET /api/contacts/[name] — 联系人详情 + 聊天记录（统一多平台模型）
 import { NextRequest, NextResponse } from 'next/server'
 import { query, queryOne } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -16,7 +16,7 @@ export async function GET(
 
   // Contact info
   const contact = await queryOne(`
-    SELECT name, email, phone, feishu_open_id, last_contact_at, message_count,
+    SELECT name, avatar, tags, notes, last_contact_at, message_count,
       CASE WHEN last_contact_at IS NULL THEN 9999
         ELSE EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer
       END AS days_since_last_contact
@@ -29,7 +29,9 @@ export async function GET(
 
   // Total message count
   const totalRow = await queryOne<{ n: number }>(
-    'SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?', [name, userId]
+    `SELECT COUNT(*) as n FROM messages m
+     JOIN threads t ON m.thread_id = t.id
+     WHERE t.name = ? AND t.user_id = ? AND m.user_id = ?`, [name, userId, userId]
   )
   const total = totalRow?.n || 0
 
@@ -37,15 +39,20 @@ export async function GET(
   const messages = await query(`
     SELECT direction, content, timestamp, sender_name
     FROM (
-      SELECT direction, content, timestamp, sender_name FROM messages
-      WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT ?
+      SELECT m.direction, m.content, m.timestamp, m.sender_name
+      FROM messages m
+      JOIN threads t ON m.thread_id = t.id
+      WHERE t.name = ? AND t.user_id = ? AND m.user_id = ?
+      ORDER BY m.timestamp DESC LIMIT ?
     ) sub ORDER BY timestamp ASC
-  `, [name, userId, limit])
+  `, [name, userId, userId, limit])
 
   // Summary if exists
   const summaryRow = await queryOne<{ summary: string; start_time: string; end_time: string }>(
-    `SELECT summary, start_time, end_time FROM chat_summaries
-     WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL`, [name, userId]
+    `SELECT s.summary, s.start_time, s.end_time
+     FROM summaries s
+     JOIN threads t ON s.thread_id = t.id
+     WHERE t.name = ? AND t.user_id = ? AND s.user_id = ? AND s.summary IS NOT NULL`, [name, userId, userId]
   )
 
   return NextResponse.json({

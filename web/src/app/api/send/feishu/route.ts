@@ -1,4 +1,4 @@
-// POST /api/send/feishu — 发送飞书消息（移植自 MCP send_feishu_message）
+// POST /api/send/feishu — 发送飞书消息（统一多平台模型）
 import { NextRequest, NextResponse } from 'next/server'
 import { queryOne, exec } from '@/lib/db'
 import { getSetting, getAppAccessToken, sendMessage } from '@/lib/feishu'
@@ -14,33 +14,41 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '缺少 contact_name 和 content' }, { status: 400 })
   }
 
-  // 1. Find receive_id
+  // 1. Find receive_id via contact_identities (feishu platform)
   let receiveId: string | null = null
   let receiveIdType: 'open_id' | 'chat_id' = 'open_id'
 
-  const userRow = await queryOne<{ open_id: string }>(
-    'SELECT open_id FROM feishu_users WHERE name = ? AND user_id = ? LIMIT 1', [contact_name, userId]
+  // Look up feishu identity for this contact
+  const identityRow = await queryOne<{ platform_uid: string }>(
+    `SELECT ci.platform_uid
+     FROM contact_identities ci
+     JOIN channels ch ON ci.channel_id = ch.id
+     JOIN contacts c ON ci.contact_id = c.id
+     WHERE ch.platform = 'feishu' AND c.name = ? AND ch.user_id = ?
+     LIMIT 1`,
+    [contact_name, userId]
   )
-  if (userRow) {
-    receiveId = userRow.open_id
-  } else {
-    const contactRow = await queryOne<{ feishu_open_id: string }>(
-      'SELECT feishu_open_id FROM contacts WHERE name = ? AND user_id = ? AND feishu_open_id IS NOT NULL', [contact_name, userId]
-    )
-    receiveId = contactRow?.feishu_open_id ?? null
+  if (identityRow) {
+    receiveId = identityRow.platform_uid
   }
 
+  // Fallback: look up thread (group chat) by name
   if (!receiveId) {
-    const stateRow = await queryOne<{ chat_id: string }>(
-      'SELECT chat_id FROM feishu_sync_state WHERE chat_name = ? AND user_id = ? LIMIT 1', [contact_name, userId]
+    const threadRow = await queryOne<{ platform_thread_id: string }>(
+      `SELECT t.platform_thread_id
+       FROM threads t
+       JOIN channels ch ON t.channel_id = ch.id
+       WHERE ch.platform = 'feishu' AND t.name = ? AND t.user_id = ?
+       LIMIT 1`,
+      [contact_name, userId]
     )
-    if (!stateRow) {
+    if (!threadRow) {
       return NextResponse.json({
         success: false,
         message: `找不到"${contact_name}"的飞书账号`,
       }, { status: 404 })
     }
-    receiveId = stateRow.chat_id
+    receiveId = threadRow.platform_thread_id
     receiveIdType = 'chat_id'
   }
 
@@ -60,12 +68,31 @@ export async function POST(req: NextRequest) {
     const appToken = await getAppAccessToken(userId)
     const { message_id } = await sendMessage(appToken, receiveId!, content, receiveIdType)
 
-    // 4. Record in messages table
+    // 4. Record in messages table — find thread for this contact
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    await exec(
-      'INSERT INTO messages(contact_name, direction, content, timestamp, source_id, user_id) VALUES (?, ?, ?, ?, ?, ?)',
-      [contact_name, 'sent', content, now, message_id, userId]
+    const thread = await queryOne<{ id: number; channel_id: number }>(
+      `SELECT t.id, t.channel_id
+       FROM threads t
+       JOIN channels ch ON t.channel_id = ch.id
+       WHERE ch.platform = 'feishu' AND t.name = ? AND t.user_id = ?
+       LIMIT 1`,
+      [contact_name, userId]
     )
+
+    if (thread) {
+      await exec(
+        `INSERT INTO messages(user_id, thread_id, channel_id, direction, content, timestamp, platform_msg_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [userId, thread.id, thread.channel_id, 'sent', content, now, message_id]
+      )
+    } else {
+      await exec(
+        `INSERT INTO messages(user_id, direction, content, timestamp, platform_msg_id)
+         VALUES (?, ?, ?, ?, ?)`,
+        [userId, 'sent', content, now, message_id]
+      )
+    }
+
     await exec(
       'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ? AND user_id = ?',
       [now, contact_name, userId]

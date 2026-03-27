@@ -1,4 +1,4 @@
-// GET /api/messages/new — 获取最近新消息
+// GET /api/messages/new — 获取最近新消息（统一多平台模型）
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -13,19 +13,20 @@ export async function GET(req: NextRequest) {
   const rows = await query<any>(`
     SELECT
       m.id,
-      m.source_id as message_id,
-      m.contact_name,
+      m.platform_msg_id as message_id,
+      t.name as contact_name,
       m.content as incoming_content,
       m.timestamp as created_at,
       m.sender_name,
       COALESCE(m.is_read, 0) as is_read
     FROM messages m
+    JOIN threads t ON m.thread_id = t.id AND t.user_id = ?
     WHERE m.timestamp::timestamp > NOW() - (? || ' minutes')::interval
       AND m.direction = 'received'
       AND m.user_id = ?
     ORDER BY m.timestamp DESC
     LIMIT ?
-  `, [minutes, userId, limit])
+  `, [userId, minutes, userId, limit])
 
   const messages = rows.map(row => ({
     ...row,

@@ -8,9 +8,8 @@ import { useRouter } from 'next/navigation'
 // ---------- Types ----------
 interface Contact {
   name: string
-  email: string | null
-  phone: string | null
-  feishu_open_id: string | null
+  avatar: string | null
+  tags: string[] | null
   last_contact_at: string | null
   message_count: number
   days_since_last_contact: number
@@ -25,7 +24,7 @@ interface Message {
 
 interface NewMessage {
   id: number
-  contact_name: string
+  thread_name: string
   incoming_content: string
   created_at: string
   is_at_me: boolean
@@ -327,7 +326,7 @@ export default function HomePage() {
     }).catch(console.error)
 
     // Mark as read
-    const unreadIds = newMessages.filter(m => m.contact_name === selectedName && !m.is_read).map(m => m.id)
+    const unreadIds = newMessages.filter(m => m.thread_name === selectedName && !m.is_read).map(m => m.id)
     if (unreadIds.length > 0) {
       fetch('/api/messages/read', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: unreadIds }) })
         .then(() => setNewMessages(prev => prev.map(m => unreadIds.includes(m.id) ? { ...m, is_read: true } : m)))
@@ -345,11 +344,8 @@ export default function HomePage() {
     const text = directInput.trim()
     setDirectInput('')
 
-    const platform = selectedContact.feishu_open_id ? 'feishu' : 'email'
-    const endpoint = platform === 'feishu' ? '/api/send/feishu' : '/api/send/email'
-    const payload = platform === 'feishu'
-      ? { contact_name: selectedName, content: text }
-      : { contact_name: selectedName, body: text }
+    const endpoint = '/api/send/feishu'
+    const payload = { contact_name: selectedName, content: text }
 
     // Optimistic: add to messages immediately
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
@@ -368,7 +364,7 @@ export default function HomePage() {
 
   // ---------- Contact filtering ----------
   const filteredContacts = search ? contacts.filter(c => c.name.includes(search)) : contacts
-  const pendingNames = new Set(newMessages.filter(m => !m.is_read).map(m => m.contact_name))
+  const pendingNames = new Set(newMessages.filter(m => !m.is_read).map(m => m.thread_name))
   const pendingContacts = filteredContacts.filter(c => pendingNames.has(c.name))
   const recentContacts = filteredContacts.filter(c => !pendingNames.has(c.name))
 
@@ -430,7 +426,7 @@ export default function HomePage() {
               <h3 className="px-4 mb-2 text-[11px] font-bold uppercase tracking-[0.1em] text-outline">待处理 ({pendingContacts.length})</h3>
               <div className="space-y-0.5">
                 {pendingContacts.map(c => (
-                  <ContactRow key={c.name} contact={c} selected={c.name === selectedName} preview={newMessages.find(m => m.contact_name === c.name)?.incoming_content} hasPending onClick={() => setSelectedName(c.name)} />
+                  <ContactRow key={c.name} contact={c} selected={c.name === selectedName} preview={newMessages.find(m => m.thread_name === c.name)?.incoming_content} hasPending onClick={() => setSelectedName(c.name)} />
                 ))}
               </div>
             </div>
@@ -581,12 +577,16 @@ export default function HomePage() {
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm ${nameColor(selectedContact.name)}`}>{getInitial(selectedContact.name)}</div>
                 <div>
                   <h1 className="font-[Manrope] font-bold text-sm text-on-surface">{selectedContact.name}</h1>
-                  <span className="text-[10px] text-outline">{selectedContact.message_count} 条消息 · {selectedContact.email || selectedContact.phone || '飞书'}</span>
+                  <span className="text-[10px] text-outline">{selectedContact.message_count} 条消息</span>
                 </div>
               </div>
-              <span className="text-[10px] text-outline bg-surface-container px-2 py-1 rounded">
-                {selectedContact.feishu_open_id ? '飞书' : selectedContact.email ? '邮件' : '记录'}
-              </span>
+              {selectedContact.tags && selectedContact.tags.length > 0 && (
+                <div className="flex gap-1">
+                  {selectedContact.tags.slice(0, 3).map((tag, i) => (
+                    <span key={i} className="text-[10px] text-outline bg-surface-container px-2 py-1 rounded">{tag}</span>
+                  ))}
+                </div>
+              )}
             </header>
 
             <div className="flex-grow overflow-y-auto p-6 space-y-3 flex flex-col no-scrollbar">
@@ -682,10 +682,13 @@ export default function HomePage() {
               <div className={`w-12 h-12 rounded-full ring-2 ring-surface-container flex items-center justify-center font-bold text-lg ${nameColor(selectedContact.name)}`}>{getInitial(selectedContact.name)}</div>
               <div>
                 <h2 className="font-[Manrope] font-bold text-lg text-on-surface leading-none mb-1.5">{selectedContact.name}</h2>
-                <div className="flex gap-1.5 flex-wrap">
-                  {selectedContact.email && <span className="px-2 py-0.5 bg-surface-container text-outline text-[10px] font-bold rounded truncate max-w-[120px]">{selectedContact.email}</span>}
-                  {selectedContact.phone && <span className="px-2 py-0.5 bg-surface-container text-outline text-[10px] font-bold rounded">{selectedContact.phone}</span>}
-                </div>
+                {selectedContact.tags && selectedContact.tags.length > 0 && (
+                  <div className="flex gap-1.5 flex-wrap">
+                    {selectedContact.tags.map((tag, i) => (
+                      <span key={i} className="px-2 py-0.5 bg-surface-container text-outline text-[10px] font-bold rounded">{tag}</span>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="space-y-1.5">
@@ -711,15 +714,13 @@ export default function HomePage() {
             <div className="space-y-3">
               <InfoRow label="消息数" value={`${selectedContact.message_count} 条（共 ${totalMsgCount}）`} />
               <InfoRow label="最后联系" value={selectedContact.last_contact_at?.slice(0, 10) || '从未'} />
-              {selectedContact.email && <InfoRow label="邮箱" value={selectedContact.email} />}
-              {selectedContact.phone && <InfoRow label="电话" value={selectedContact.phone} />}
             </div>
           </section>
 
-          {newMessages.filter(m => m.contact_name === selectedName).length > 0 && (
+          {newMessages.filter(m => m.thread_name === selectedName).length > 0 && (
             <section className="p-6 space-y-3 border-b border-outline-variant/10">
               <h3 className="text-[11px] font-bold uppercase tracking-[0.1em] text-outline">最近收到</h3>
-              {newMessages.filter(m => m.contact_name === selectedName).slice(0, 5).map(m => (
+              {newMessages.filter(m => m.thread_name === selectedName).slice(0, 5).map(m => (
                 <div key={m.id} className="space-y-1">
                   <p className="text-xs text-on-surface">{m.incoming_content}</p>
                   <span className="text-[10px] text-outline">{timeStr(m.created_at)} {m.is_at_me && <span className="text-accent-orange font-bold">@我</span>}</span>
