@@ -39,7 +39,7 @@ if [ ! -d "$INSTALL_DIR/agent" ]; then
   git clone --depth 1 https://github.com/yao00oo/social-proxy.git "$INSTALL_DIR/agent-repo" 2>/dev/null || true
   cp -r "$INSTALL_DIR/agent-repo/botook-agent" "$INSTALL_DIR/agent"
   rm -rf "$INSTALL_DIR/agent-repo"
-  cd "$INSTALL_DIR/agent" && npm install --production 2>/dev/null
+  cd "$INSTALL_DIR/agent" && npm install 2>/dev/null
   echo "✓ 下载完成"
 else
   echo "✓ botook-agent 已安装"
