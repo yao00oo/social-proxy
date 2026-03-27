@@ -1,58 +1,86 @@
-#!/bin/bash
-# Botook Agent — 一行命令安装、登录、启动
+#!/bin/sh
+# Social Proxy Terminal — 一行命令安装
+# curl -fsSL https://botook.ai/install.sh | sh
 set -e
 
-INSTALL_DIR="$HOME/.botook"
+INSTALL_DIR="$HOME/.socialproxy"
 BIN_DIR="$INSTALL_DIR/bin"
-REPO="https://botook.ai"
+REPO="https://raw.githubusercontent.com/yao00oo/social-proxy/main/socialproxy-terminal"
 
 echo ""
-echo "  ╔══════════════════════════════════════╗"
-echo "  ║        botook-agent installer        ║"
-echo "  ╚══════════════════════════════════════╝"
+echo "  Social Proxy Terminal"
 echo ""
 
-# 1. 检测系统
-OS=$(uname -s)
-ARCH=$(uname -m)
-echo "● 系统: $OS $ARCH"
-
-if [ "$OS" != "Darwin" ]; then
-  echo "⚠ 目前仅支持 macOS，Windows/Linux 版本即将推出"
-  exit 1
+# 检测 Node.js >= 18
+HAS_NODE=false
+if command -v node >/dev/null 2>&1; then
+  NODE_VER=$(node -v | sed 's/v//' | cut -d. -f1)
+  if [ "$NODE_VER" -ge 18 ] 2>/dev/null; then
+    HAS_NODE=true
+  fi
 fi
 
-# 2. 检查 Node.js
-if ! command -v node &> /dev/null; then
-  echo "✗ 需要 Node.js，请先安装: https://nodejs.org"
-  exit 1
+if [ "$HAS_NODE" = false ]; then
+  # 检测 bun
+  if command -v bun >/dev/null 2>&1; then
+    HAS_NODE=true  # bun 兼容 node API
+  else
+    echo "  未检测到 Node.js >= 18"
+    echo "  正在安装 Bun..."
+    curl -fsSL https://bun.sh/install | bash 2>/dev/null
+    export BUN_INSTALL="$HOME/.bun"
+    export PATH="$BUN_INSTALL/bin:$PATH"
+    echo ""
+  fi
 fi
-echo "✓ Node.js $(node -v)"
 
-# 3. 创建安装目录
+# 创建目录
 mkdir -p "$BIN_DIR"
-echo "✓ 安装目录: $INSTALL_DIR"
 
-# 4. 下载 agent（当前直接用 npx 运行源码）
-if [ ! -d "$INSTALL_DIR/agent" ]; then
-  echo "● 下载 botook-agent..."
-  git clone --depth 1 https://github.com/yao00oo/social-proxy.git "$INSTALL_DIR/agent-repo" 2>/dev/null || true
-  cp -r "$INSTALL_DIR/agent-repo/botook-agent" "$INSTALL_DIR/agent"
-  rm -rf "$INSTALL_DIR/agent-repo"
-  cd "$INSTALL_DIR/agent" && npm install 2>/dev/null
-  echo "✓ 下载完成"
+# 下载编译好的 JS
+echo "  下载中..."
+for f in cli.js auth.js config.js http.js logger.js terminal.js; do
+  curl -fsSL "$REPO/dist/$f" -o "$BIN_DIR/$f"
+done
+
+# 下载 package.json 并安装依赖
+curl -fsSL "$REPO/package.json" -o "$BIN_DIR/package.json"
+cd "$BIN_DIR"
+if command -v node >/dev/null 2>&1; then
+  npm install --production --silent 2>/dev/null
+elif command -v bun >/dev/null 2>&1; then
+  bun install --production 2>/dev/null
+fi
+
+# 创建启动脚本
+cat > "$BIN_DIR/socialproxy-terminal" << 'EOF'
+#!/bin/sh
+DIR="$(cd "$(dirname "$0")" && pwd)"
+if command -v node >/dev/null 2>&1; then
+  exec node "$DIR/cli.js" "$@"
+elif command -v bun >/dev/null 2>&1; then
+  exec bun "$DIR/cli.js" "$@"
 else
-  echo "✓ botook-agent 已安装"
+  echo "需要 Node.js 或 Bun"; exit 1
 fi
+EOF
+chmod +x "$BIN_DIR/socialproxy-terminal"
 
-# 5. 登录（如果还没登录）
-if [ ! -f "$INSTALL_DIR/config.json" ]; then
-  echo ""
-  echo "● 正在打开浏览器登录..."
-  cd "$INSTALL_DIR/agent" && npx ts-node src/cli.ts login
+# 加到 PATH
+SHELL_RC="$HOME/.zshrc"
+[ "$(basename "$SHELL")" = "bash" ] && SHELL_RC="$HOME/.bashrc"
+if ! grep -q "socialproxy" "$SHELL_RC" 2>/dev/null; then
+  printf '\n# Social Proxy Terminal\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$SHELL_RC"
 fi
+export PATH="$BIN_DIR:$PATH"
 
-# 6. 启动同步
 echo ""
-echo "● 开始同步..."
-cd "$INSTALL_DIR/agent" && npx ts-node src/cli.ts start
+echo "  ✓ 安装完成！"
+echo ""
+echo "  运行：socialproxy-terminal"
+echo ""
+echo "  如果提示找不到命令：source $SHELL_RC"
+echo ""
+
+# 直接启动
+exec "$BIN_DIR/socialproxy-terminal"
