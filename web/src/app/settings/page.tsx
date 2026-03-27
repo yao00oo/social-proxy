@@ -474,6 +474,10 @@ export default function SettingsPage() {
   // Expanded panels
   const [expandedCard, setExpandedCard] = useState<string | null>(null)
 
+  // Terminal
+  const [terminalConnected, setTerminalConnected] = useState(false)
+  const [terminalName, setTerminalName] = useState<string | null>(null)
+
   // Doc sync
   const docSync = useDocSync()
 
@@ -531,6 +535,11 @@ export default function SettingsPage() {
     fetchSettings()
     checkFeishuAuth()
     checkGmailAuth()
+    // Check terminal connection
+    fetch('/api/contacts?limit=500').then(r => r.json()).then(data => {
+      const term = (data.contacts || []).find((c: any) => c.platform === 'terminal')
+      if (term) { setTerminalConnected(true); setTerminalName(term.name) }
+    }).catch(() => {})
     fetch('/api/feishu-sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -794,6 +803,18 @@ export default function SettingsPage() {
               onAction={() => setExpandedCard(expandedCard === 'imessage' ? null : 'imessage')}
             />
 
+            {/* 终端/CLI */}
+            <SourceCard
+              icon="terminal"
+              iconClass="text-on-surface"
+              title="终端/CLI"
+              subtitle="远程控制 & 消息同步"
+              connected={terminalConnected}
+              connectedLabel={terminalName || '已连接'}
+              actionLabel="连接终端"
+              onAction={() => setExpandedCard(expandedCard === 'terminal' ? null : 'terminal')}
+            />
+
             {/* WhatsApp */}
             <SourceCard icon="perm_phone_msg" title="WhatsApp" disabled disabledLabel="即将支持" />
 
@@ -803,6 +824,52 @@ export default function SettingsPage() {
             {/* More */}
             <SourceCard icon="add" title="更多数据源" dashed />
           </div>
+
+          {/* Terminal expanded panel */}
+          {expandedCard === 'terminal' && (
+            <div className="bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-5 space-y-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="material-symbols-outlined text-on-surface">terminal</span>
+                <h3 className="text-sm font-bold text-on-surface">连接终端</h3>
+              </div>
+
+              <p className="text-xs text-on-surface-variant leading-relaxed">
+                在任意终端（Mac / Linux / Windows）运行以下命令，即可将终端连接为 Social Proxy 联系人。
+                连接后可以在 Web 端给终端发消息，也可以在终端使用 Social Proxy 的所有数据。
+              </p>
+
+              <div className="bg-surface rounded-xl p-4 font-mono text-sm text-on-surface relative">
+                <code>curl -fsSL https://botook.ai/install.sh | sh</code>
+                <div className="absolute top-2 right-2">
+                  <CopyButton text="curl -fsSL https://botook.ai/install.sh | sh" />
+                </div>
+              </div>
+
+              <div className="space-y-2 text-xs text-on-surface-variant">
+                <p className="font-medium text-on-surface">安装后会：</p>
+                <div className="flex items-start gap-2"><span className="text-primary">1.</span><span>自动检测运行环境（Node.js / Bun）</span></div>
+                <div className="flex items-start gap-2"><span className="text-primary">2.</span><span>弹出浏览器，登录并授权此终端</span></div>
+                <div className="flex items-start gap-2"><span className="text-primary">3.</span><span>终端出现在联系人列表中，双向同步消息</span></div>
+              </div>
+
+              <div className="bg-surface rounded-xl p-3 space-y-2">
+                <p className="text-[11px] font-bold text-outline uppercase tracking-wider">安装后可用的命令</p>
+                <div className="font-mono text-xs text-on-surface-variant space-y-1">
+                  <div><span className="text-primary">socialproxy-terminal</span> — 启动终端（首次需授权，之后免登录）</div>
+                  <div><span className="text-primary">socialproxy-terminal send &quot;消息&quot;</span> — 发一条消息（脚本用）</div>
+                  <div><span className="text-primary">socialproxy-terminal status</span> — 查看连接状态</div>
+                  <div><span className="text-primary">socialproxy-terminal logout</span> — 断开连接</div>
+                </div>
+              </div>
+
+              {terminalConnected && (
+                <div className="flex items-center gap-2 p-3 bg-primary/5 rounded-xl">
+                  <div className="w-2 h-2 rounded-full bg-teal-500" />
+                  <span className="text-xs text-teal-700 font-medium">{terminalName} 已连接</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* WeChat import result */}
           {importResult && (
