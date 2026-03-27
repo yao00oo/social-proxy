@@ -72,18 +72,142 @@ social-proxy/
 
 ## 数据库
 
-**连接**：Neon serverless，通过 `@neondatabase/serverless` 的 `neon()` 函数。
-**查询方式**：`query(sql, params)` / `queryOne(sql, params)` / `exec(sql, params)`，自动把 `?` 转成 `$1,$2,...`。
+**连接**：Neon serverless PostgreSQL，通过 `@neondatabase/serverless` + Drizzle ORM。
+**Schema 定义**：`web/src/lib/schema.ts`（Drizzle pgTable），同步到 `mcp-server/src/schema.ts`。
+**所有表都有 `user_id` 外键，实现多租户数据隔离。**
 
-**核心表**：
-- `users` — NextAuth 用户（自动创建）
-- `messages` — 聊天记录（user_id, contact_name, direction, content, timestamp, source_id, sender_name）
-- `contacts` — 联系人（user_id, name, email, phone, feishu_open_id）
-- `settings` — 配置（user_id, key, value）复合主键
-- `feishu_sync_state` — 飞书同步进度（user_id, chat_id, last_sync_ts）
-- `feishu_users` — 飞书用户映射（user_id, open_id, name）
+### 统一多平台数据模型
 
-所有表都有 `user_id` 外键关联 `users.id`，实现多租户数据隔离。
+```
+users (NextAuth)
+  ├── channels ── 数据源渠道（飞书/Gmail/微信/Telegram/任意IM）
+  │     ├── threads ── 会话（私聊/群聊/邮件线程）
+  │     │     ├── messages ── 消息（统一格式）
+  │     │     └── summaries ── AI 摘要
+  │     ├── contact_identities ── 联系人的平台身份
+  │     └── documents ── 文档
+  ├── contacts ── 联系人（平台无关，可合并）
+  ├── settings ── 用户偏好
+  └── conversations ── 小林对话历史
+```
+
+### 表字段详情
+
+#### `channels` — 数据源渠道
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | serial PK | |
+| user_id | text FK→users | 所属用户 |
+| platform | text NOT NULL | 平台类型：`feishu` `gmail` `wechat` `telegram` `whatsapp` `slack` `discord` `custom` |
+| name | text NOT NULL | 显示名（如"工作飞书"、"个人Gmail"） |
+| enabled | integer | 是否启用（1/0） |
+| credentials | jsonb | OAuth/API 凭证（加密 JSON）。飞书: `{app_id, app_secret, user_token, refresh_token, user_id, token_time}`。Gmail: `{access_token, refresh_token, client_id, client_secret}`。SMTP: `{host, port, user, pass, from_name}` |
+| sync_state | jsonb | 同步状态（各平台自定义）。飞书: `{chats:{chat_id:{name,type,last_sync_ts}}}`。Gmail: `{history_id}` |
+| send_mode | text | 发送权限：`suggest`（草稿需确认）/ `auto`（直接发送） |
+| created_at | timestamptz | |
+
+**新 IM 接入**：只需 INSERT 一行 channel + 写 sync adapter，不需要建新表。
+
+#### `contacts` — 联系人（平台无关）
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | serial PK | |
+| user_id | text FK→users | |
+| name | text NOT NULL | 显示名（唯一索引 user_id+name） |
+| avatar | text | 头像 URL |
+| tags | jsonb | 标签数组：`["朋友","同事","VIP"]` |
+| notes | text | 用户备注 |
+| last_contact_at | text | 最后联系时间（冗余，写消息时更新） |
+| message_count | integer | 消息总数（冗余，写消息时更新） |
+| merged_into | integer | 合并目标联系人 ID（跨平台合并用） |
+
+#### `contact_identities` — 联系人的平台身份
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | serial PK | |
+| contact_id | integer FK→contacts | 所属联系人 |
+| channel_id | integer FK→channels | 所属渠道 |
+| platform_uid | text NOT NULL | 平台唯一 ID：飞书 open_id、邮箱地址、微信 wxid 等（唯一索引 channel_id+platform_uid） |
+| display_name | text | 该平台上的显示名（可能和 contacts.name 不同） |
+| email | text | 可索引的邮箱（方便搜索，其他字段放 metadata） |
+| phone | text | 可索引的电话 |
+| metadata | jsonb | 平台特有数据 |
+
+**一个联系人可有多个身份**：张三在飞书(open_id) + Gmail(邮箱) + 微信(wxid)。
+
+#### `threads` — 会话
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | serial PK | |
+| user_id | text FK→users | |
+| channel_id | integer FK→channels | 所属渠道 |
+| platform_thread_id | text NOT NULL | 平台会话 ID：飞书 chat_id、Gmail thread_id 等（唯一索引 channel_id+platform_thread_id） |
+| name | text | 会话名（群名、私聊对方名、邮件主题） |
+| type | text | `dm`（私聊）/ `group`（群聊）/ `channel`（频道）/ `email_thread` |
+| participants | jsonb | 参与者列表 `[{identity_id, name}]` |
+| last_message_at | text | 最后消息时间 |
+| last_sync_ts | text | 该会话的同步游标（飞书用毫秒时间戳） |
+| metadata | jsonb | 平台特有数据 |
+
+#### `messages` — 消息（统一格式，所有平台写入同一张表）
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | serial PK | |
+| user_id | text FK→users | 冗余（避免 JOIN threads），查询优化 |
+| thread_id | integer FK→threads | 所属会话 |
+| channel_id | integer FK→channels | 冗余，来源渠道（避免 JOIN threads） |
+| direction | text NOT NULL | `sent` / `received` |
+| sender_identity_id | integer | 发送者的 contact_identity ID |
+| sender_name | text | 冗余，发送者显示名（避免 JOIN） |
+| content | text NOT NULL | 消息文本内容 |
+| msg_type | text | `text` `image` `file` `email` `card` `audio` `video` `sticker` `system` |
+| timestamp | text NOT NULL | ISO 格式时间 |
+| platform_msg_id | text | 平台消息 ID（去重，唯一索引 channel_id+platform_msg_id） |
+| is_read | integer | 已读标记（0/1） |
+| metadata | jsonb | 平台特有数据。邮件: `{subject,to,cc,html}`。飞书: `{mentions,parent_id,image_key}` |
+
+#### `summaries` — AI 摘要
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | serial PK | |
+| user_id | text FK→users | 冗余 |
+| thread_id | integer FK→threads | 所属会话（唯一索引 user_id+thread_id） |
+| summary | text | AI 生成的摘要 |
+| start_time / end_time | text | 摘要覆盖的时间范围 |
+| message_count | integer | 摘要覆盖的消息数 |
+| updated_at | timestamptz | |
+
+#### `documents` — 文档
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | serial PK | |
+| user_id | text FK→users | |
+| channel_id | integer FK→channels | 来源渠道 |
+| platform_doc_id | text NOT NULL | 平台文档 ID（唯一索引 channel_id+platform_doc_id） |
+| title | text NOT NULL | |
+| doc_type | text | `doc` `sheet` `slide` `wiki` `pdf` `attachment` |
+| url | text | |
+| content / summary | text | |
+| metadata | jsonb | |
+
+#### `settings` — 用户偏好（KV）
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| user_id | text FK→users | 复合主键 |
+| key | text | 复合主键。如 `ai_model` `language` `notification` |
+| value | text | |
+
+**注意**：渠道凭证（OAuth token、SMTP 配置）存在 `channels.credentials`，不要存 settings。
+
+#### `conversations` / `conversation_messages` — 小林对话历史
+用于持久化 AI 助手的对话。`role`: `user` / `assistant` / `tool`。`tool_calls`: JSON 字符串。
+
+### 设计原则
+
+1. **冗余字段有明确理由**：`messages.user_id`/`channel_id`/`sender_name` 是查询优化，避免高频 JOIN
+2. **时间字段类型**：历史原因部分用 `text`（ISO 字符串），新表用 `timestamptz`，后续统一
+3. **JSONB 用于可变结构**：`credentials`、`sync_state`、`metadata`、`participants`、`tags` — 各平台格式不同，不适合固定列
+4. **去重靠唯一索引**：`channel_id + platform_msg_id`（消息）、`channel_id + platform_uid`（身份）、`channel_id + platform_thread_id`（会话）
 
 ## 部署流程
 
@@ -140,16 +264,20 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 所有 API（除 health/auth）都需要登录，通过 `getUserId()` 获取当前用户 ID。
 `getUserId()` 会自动在 PG 的 users 表创建用户记录（JWT 模式不走 adapter）。
 
-## 飞书同步机制
+## 同步机制（通用）
 
-1. 用户在设置页通过 6 步引导教程创建飞书应用并授权（OAuth 回调走 relay.botook.ai）
-2. 点同步 → POST `/api/feishu-sync` → 拉会话列表（`sort_type=ByActiveTimeDesc`，最近活跃的先同步）→ 逐个拉消息
-3. 增量同步：每个会话记录 `last_sync_ts`，只拉新消息
-4. Vercel 60 秒超时保护：接近超时自动停止，前端自动续传（递归调用 handleFeishuSync）
-5. 支持两种模式：`FEISHU_APP_ID` 环境变量（共享应用）或用户自建应用（自行填写 App ID/Secret）
-6. `POST /api/feishu-sync { reset: true }` 清空旧数据重新全量同步
-7. **同步状态持久化到 DB**（`settings` 表 key=`feishu_sync_status`），因为 Vercel serverless 实例不共享内存，GET 和 POST 可能在不同实例
-8. 主页通过 `/api/sync-status` 每 5 秒轮询显示全局进度
+所有平台同步遵循统一流程：
+1. 用户在设置页连接数据源 → 创建 `channels` 记录（含 credentials）
+2. 点同步 → sync adapter 拉取数据 → 写入 `threads` + `messages` + `contact_identities`
+3. 增量同步：`threads.last_sync_ts` 记录每个会话的同步游标
+4. Vercel 60 秒超时保护：接近超时自动停止，前端自动续传
+5. 同步状态存在 `channels.sync_state`（JSON），serverless 无状态安全
+
+### 飞书特有
+- OAuth 回调走 relay.botook.ai（Cloudflare Worker 中继）
+- `listChats` 不返回 p2p 单聊，需用搜索 API 发现
+- 凭证存 `channels.credentials`: `{app_id, app_secret, user_token, refresh_token, user_id, token_time}`
+- 发送者姓名：用 `sender.id`（open_id）查 `contact_identities.platform_uid`
 
 ## 飞书 API 字段参考（避免踩坑）
 
@@ -236,21 +364,28 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 ## TODO
 
 ### 高优先级（核心功能）
-- [ ] 飞书同步调试：同步能跑但需验证最新修复（排序、续传、进度显示）
-- [ ] 飞书 p2p 单聊同步：listChats 不返回单聊，需要用搜索 API 发现 chat_id
-- [x] 飞书发送者姓名：用 open_id 查 feishu_users 表获取姓名
+- [x] 统一多平台数据模型（channels/threads/contact_identities 替代 feishu_* 专属表）
+- [x] 飞书发送者姓名：用 open_id 查 contact_identities
+- [ ] **飞书同步适配新模型**：sync adapter 写入 channels → threads → messages
+- [ ] 飞书 p2p 单聊同步：listChats 不返回单聊，需用搜索 API 发现 chat_id
+- [ ] **Web Agent 工具对接 PG**：当前 agent.ts 的 tools 还是查 SQLite，需要改成查 PG
+- [ ] **Markdown 渲染**：小林回复含 Markdown，前端需要渲染
+- [ ] **Draft Card 可靠性**：DeepSeek 的 `<<DRAFT|...|...|...>>` 标记有时被跳过
 
 ### 中优先级（数据源）
-- [ ] Gmail 同步：API route 是 stub，需要用 PG 重写
-- [ ] 邮件同步（IMAP）：同上
-- [ ] 微信导入：前端有 UI，后端已转 PG 但未测试
-- [ ] 飞书文档同步：API route 是 stub
+- [ ] Gmail 同步：适配新模型（channel + threads + messages）
+- [ ] IMAP 邮件同步：同上
+- [ ] 微信导入：解析聊天记录文件 → 写入新模型
+- [ ] 飞书文档同步：写入 documents 表
+- [ ] **通用导入**：任意 IM 的聊天记录文本导入（custom channel）
 
 ### 低优先级（体验优化）
-- [ ] 飞书授权后自动触发同步
-- [ ] 主页联系人和消息展示验证（依赖同步数据）
-- [ ] AI 对话工具调用验证（PG 异步查询已改）
-- [ ] 设置页卡片展开/折叠细节完善
+- [ ] 对话历史持久化（conversations 表已建，前端未接）
+- [ ] 移动端适配
+- [ ] 搜索联动（人名 + 消息内容）
+- [ ] 聊天记录分页（上滑加载）
+- [ ] 模型选择（settings 页切换 AI 模型）
+- [ ] 时间字段统一为 timestamptz
 
 <!-- VERCEL BEST PRACTICES START -->
 ## Vercel 开发最佳实践
