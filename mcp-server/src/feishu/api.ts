@@ -186,7 +186,7 @@ export async function listMessages(
     }
 
     for (const item of res.data?.items || []) {
-      const parsed = parseContent(item.msg_type, item.body?.content)
+      const parsed = parseContent(item.msg_type, item.body?.content, item.mentions)
       messages.push({
         message_id: item.message_id,
         sender_id: item.sender?.id || '',
@@ -312,18 +312,25 @@ export function downloadImage(
 }
 
 // ── 解析消息内容为纯文本 ──────────────────────────────
-function parseContent(msgType: string, rawContent: string | undefined): { text: string; imageKey?: string } {
+function parseContent(msgType: string, rawContent: string | undefined, mentions?: any[]): { text: string; imageKey?: string } {
   if (!rawContent) return { text: '[空消息]' }
+
+  function replaceMentions(text: string): string {
+    if (!mentions?.length || !text) return text
+    for (const m of mentions) {
+      if (m.key && m.name) text = text.split(m.key).join(`@${m.name}`)
+    }
+    return text
+  }
 
   try {
     const body = JSON.parse(rawContent)
 
     switch (msgType) {
       case 'text':
-        return { text: body.text || '[空文本]' }
+        return { text: replaceMentions(body.text || '[空文本]') }
 
       case 'post': {
-        // 富文本：遍历所有 block 提取文本
         const lines: string[] = []
         const content = body.content || body.zh_cn?.content || []
         for (const line of content) {
@@ -338,7 +345,7 @@ function parseContent(msgType: string, rawContent: string | undefined): { text: 
             .join('')
           if (text) lines.push(text)
         }
-        return { text: lines.join('\n') || '[富文本]' }
+        return { text: replaceMentions(lines.join('\n') || '[富文本]') }
       }
 
       case 'image':
