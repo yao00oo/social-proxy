@@ -598,7 +598,29 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, autoSync: newInterval > 0, autoSyncSeconds: newInterval })
   }
 
-  // Mode 2: Trigger full sync (runs synchronously within the request)
+  // Mode 2: Reset and re-sync (delete old data, re-sync from scratch)
+  if (body.reset) {
+    if (syncRunning) {
+      return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
+    }
+    syncRunning = true
+    syncLog = ['重置数据，准备重新全量同步...']
+    try {
+      await exec('DELETE FROM messages WHERE user_id = ?', [userId])
+      await exec('DELETE FROM contacts WHERE user_id = ?', [userId])
+      await exec("UPDATE feishu_sync_state SET last_sync_ts = '0' WHERE user_id = ?", [userId])
+      syncLog.push('已清空旧数据，开始全量同步...')
+      await fullSync(userId)
+      return NextResponse.json({ ok: true, message: '重置同步完成', result: lastResult })
+    } catch (err: any) {
+      syncLog.push(`重置同步异常: ${err.message}`)
+      return NextResponse.json({ ok: false, message: err.message, result: lastResult })
+    } finally {
+      syncRunning = false
+    }
+  }
+
+  // Mode 3: Trigger full sync (runs synchronously within the request)
   if (syncRunning) {
     return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
   }
