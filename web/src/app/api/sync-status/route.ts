@@ -13,6 +13,12 @@ export async function GET() {
   )
   const feishu = feishuStatusRow?.value ? JSON.parse(feishuStatusRow.value) : null
 
+  // 飞书是否已授权
+  const feishuAuthRow = await queryOne<{ value: string }>(
+    `SELECT value FROM settings WHERE key = 'feishu_auth_done' AND user_id = ?`, [userId]
+  )
+  const feishuAuthed = feishuAuthRow?.value === '1'
+
   // 飞书同步统计
   const feishuStats = await queryOne<{ synced: string; total: string }>(
     `SELECT
@@ -29,16 +35,23 @@ export async function GET() {
     [userId, userId]
   )
 
+  // status: idle | syncing | paused | error | completed | completed_with_errors | not_connected
+  let feishuStatus = feishu?.status || 'idle'
+  if (!feishuAuthed) feishuStatus = 'not_connected'
+
   return NextResponse.json({
     feishu: {
+      status: feishuStatus,
       running: feishu?.running || false,
       log: feishu?.log || [],
       lastResult: feishu?.lastResult || null,
       syncedChats: parseInt(feishuStats?.synced || '0'),
       totalChats: parseInt(feishuStats?.total || '0'),
+      authed: feishuAuthed,
+      updatedAt: feishu?.updatedAt || null,
     },
-    gmail: { running: false, synced: false }, // TODO
-    wechat: { imported: false }, // TODO
+    gmail: { status: 'not_connected', running: false },
+    wechat: { status: 'idle' },
     totals: {
       messages: parseInt(counts?.messages || '0'),
       contacts: parseInt(counts?.contacts || '0'),

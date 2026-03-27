@@ -449,26 +449,50 @@ export default function HomePage() {
 
       {/* ===== Column 2: Chat Area ===== */}
       <main className="flex-grow flex flex-col h-full bg-surface-container">
-        {syncStatus && (syncStatus.feishu.running || syncStatus.totals.messages > 0) && (
+        {syncStatus && (syncStatus.feishu.status !== 'not_connected' || syncStatus.totals.messages > 0) && (
           <div className="px-6 py-2 bg-surface-container-low/50 flex items-center gap-3 text-xs">
-            {syncStatus.feishu.running && (
+            {/* Syncing */}
+            {syncStatus.feishu.status === 'syncing' && (
               <>
-                <div className="w-3 h-3 rounded-full bg-teal-500 animate-pulse" />
-                <span className="text-on-surface-variant">
-                  飞书同步中{syncStatus.feishu.totalChats > 0 ? ` ${Math.round((syncStatus.feishu.syncedChats / syncStatus.feishu.totalChats) * 100)}%` : '...'}
+                <div className="w-2.5 h-2.5 rounded-full bg-teal-500 animate-pulse" />
+                <span className="text-on-surface-variant font-medium">
+                  飞书同步中 {syncStatus.feishu.totalChats > 0 ? `${Math.round((syncStatus.feishu.syncedChats / syncStatus.feishu.totalChats) * 100)}%` : ''}
                 </span>
                 <span className="text-outline">
                   {syncStatus.feishu.syncedChats}/{syncStatus.feishu.totalChats} 个会话
-                  {syncStatus.feishu.lastResult?.imported ? ` · 已导入 ${syncStatus.feishu.lastResult.imported} 条` : ''}
+                  {syncStatus.feishu.lastResult?.imported ? ` · ${syncStatus.feishu.lastResult.imported} 条消息` : ''}
                 </span>
               </>
             )}
-            {!syncStatus.feishu.running && syncStatus.totals.messages > 0 && (
+            {/* Paused */}
+            {syncStatus.feishu.status === 'paused' && (
+              <>
+                <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <span className="text-amber-700 font-medium">飞书同步暂停</span>
+                <span className="text-outline">{syncStatus.feishu.syncedChats}/{syncStatus.feishu.totalChats} 个会话 · 等待继续...</span>
+              </>
+            )}
+            {/* Error */}
+            {syncStatus.feishu.status === 'error' && (
+              <>
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500" />
+                <span className="text-red-700 font-medium">飞书同步失败</span>
+                <span className="text-outline">请前往设置页重试</span>
+              </>
+            )}
+            {/* Completed */}
+            {(syncStatus.feishu.status === 'completed' || syncStatus.feishu.status === 'completed_with_errors') && syncStatus.totals.messages > 0 && (
+              <>
+                <div className="w-2.5 h-2.5 rounded-full bg-teal-500" />
+                <span className="text-outline">{syncStatus.totals.messages} 条消息 · {syncStatus.totals.contacts} 个联系人</span>
+                {syncStatus.feishu.syncedChats > 0 && <span className="text-outline">· 飞书 {syncStatus.feishu.syncedChats}/{syncStatus.feishu.totalChats}</span>}
+                {syncStatus.feishu.status === 'completed_with_errors' && <span className="text-amber-600">· 部分错误</span>}
+              </>
+            )}
+            {/* Idle with data */}
+            {syncStatus.feishu.status === 'idle' && syncStatus.totals.messages > 0 && (
               <>
                 <span className="text-outline">{syncStatus.totals.messages} 条消息 · {syncStatus.totals.contacts} 个联系人</span>
-                {syncStatus.feishu.syncedChats > 0 && (
-                  <span className="text-outline">· 飞书 {syncStatus.feishu.syncedChats}/{syncStatus.feishu.totalChats} 个会话</span>
-                )}
               </>
             )}
           </div>

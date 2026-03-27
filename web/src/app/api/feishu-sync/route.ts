@@ -278,7 +278,7 @@ async function fullSync(userId: string) {
       await exec(
         `INSERT INTO settings(user_id, key, value) VALUES(?, 'feishu_sync_status', ?)
          ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
-        [userId, JSON.stringify({ running: true, log: syncLog.slice(-50), lastResult: lastResult })]
+        [userId, JSON.stringify({ status: 'syncing', running: true, log: syncLog.slice(-50), lastResult: lastResult })]
       )
     } catch {}
   }
@@ -489,12 +489,18 @@ async function fullSync(userId: string) {
   lastResult = result
   syncRunning = false
 
+  // Determine final status
+  let finalStatus = 'completed'
+  if (result.remaining > 0) finalStatus = 'paused'
+  else if (result.errors.length > 0 && result.imported === 0) finalStatus = 'error'
+  else if (result.errors.length > 0) finalStatus = 'completed_with_errors'
+
   // Persist final status
   try {
     await exec(
       `INSERT INTO settings(user_id, key, value) VALUES(?, 'feishu_sync_status', ?)
        ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
-      [userId, JSON.stringify({ running: false, log: syncLog.slice(-50), lastResult })]
+      [userId, JSON.stringify({ status: finalStatus, running: false, log: syncLog.slice(-50), lastResult, updatedAt: Date.now() })]
     )
   } catch {}
 }
