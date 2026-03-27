@@ -56,12 +56,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: '创建终端失败' }, { status: 500 })
   }
 
-  // 创建 thread
+  // 创建 thread（必须设 last_message_at，否则 Web 端联系人列表看不到）
+  const now = new Date().toISOString()
   const thread = await queryOne<{ id: number }>(
-    `INSERT INTO threads (user_id, channel_id, platform_thread_id, name, type)
-     VALUES (?, ?, ?, ?, 'dm')
+    `INSERT INTO threads (user_id, channel_id, platform_thread_id, name, type, last_message_at)
+     VALUES (?, ?, ?, ?, 'dm', ?)
      RETURNING id`,
-    [userId, channel.id, `terminal_${channel.id}`, terminalName]
+    [userId, channel.id, `terminal_${channel.id}`, terminalName, now]
   )
 
   if (!thread) {
