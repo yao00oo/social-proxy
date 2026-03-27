@@ -26,7 +26,7 @@ export async function GET(req: NextRequest) {
     LIMIT ?
   `, [...params, limit])
 
-  const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts')
+  const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?', [userId])
   const total = totalRow?.n || 0
 
   return NextResponse.json({ contacts, total })

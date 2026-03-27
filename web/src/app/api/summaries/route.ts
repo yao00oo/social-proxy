@@ -12,9 +12,9 @@ export async function GET(req: NextRequest) {
   const summaries = await query(`
     SELECT chat_name, start_time, end_time, message_count, summary
     FROM chat_summaries
-    WHERE summary IS NOT NULL ${search ? 'AND (chat_name LIKE ? OR summary LIKE ?)' : ''}
+    WHERE summary IS NOT NULL AND user_id = ? ${search ? 'AND (chat_name LIKE ? OR summary LIKE ?)' : ''}
     ORDER BY end_time DESC
-  `, search ? [`%${search}%`, `%${search}%`] : [])
+  `, search ? [userId, `%${search}%`, `%${search}%`] : [userId])
 
   return NextResponse.json({ summaries })
 }
