@@ -64,7 +64,9 @@ export async function getOrCreateThread(
 }
 
 export async function updateThreadSyncTs(threadId: number, ts: string): Promise<void> {
-  await exec('UPDATE threads SET last_sync_ts = ?, last_message_at = ? WHERE id = ?', [ts, ts, threadId])
+  // ts 是飞书的毫秒时间戳，last_sync_ts 保持原样用于增量同步，last_message_at 转 ISO 给前端显示
+  const isoTime = new Date(parseInt(ts)).toISOString()
+  await exec('UPDATE threads SET last_sync_ts = ?, last_message_at = ? WHERE id = ?', [ts, isoTime, threadId])
 }
 
 // ── Contact（联系人） ──────────────────────────────────
