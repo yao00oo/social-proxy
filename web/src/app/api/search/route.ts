@@ -18,14 +18,14 @@ export async function GET(req: NextRequest) {
   const results = contactName
     ? await query(`
         SELECT contact_name, direction, content, timestamp
-        FROM messages WHERE contact_name = ? AND content LIKE ?
+        FROM messages WHERE contact_name = ? AND content LIKE ? AND user_id = ?
         ORDER BY timestamp DESC LIMIT ?
-      `, [contactName, `%${keyword}%`, limit])
+      `, [contactName, `%${keyword}%`, userId, limit])
     : await query(`
         SELECT contact_name, direction, content, timestamp
-        FROM messages WHERE content LIKE ?
+        FROM messages WHERE content LIKE ? AND user_id = ?
         ORDER BY timestamp DESC LIMIT ?
-      `, [`%${keyword}%`, limit])
+      `, [`%${keyword}%`, userId, limit])
 
   return NextResponse.json({ results })
 }

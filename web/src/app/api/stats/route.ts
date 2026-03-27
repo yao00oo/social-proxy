@@ -7,9 +7,9 @@ export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts')
+  const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?', [userId])
   const total = totalRow?.n || 0
-  const totalMsgsRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages')
+  const totalMsgsRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages WHERE user_id = ?', [userId])
   const totalMsgs = totalMsgsRow?.n || 0
 
   const buckets = await query(`
@@ -25,35 +25,36 @@ export async function GET() {
       COUNT(*) as count
     FROM (
       SELECT EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer AS days
-      FROM contacts WHERE last_contact_at IS NOT NULL
+      FROM contacts WHERE last_contact_at IS NOT NULL AND user_id = ?
     ) sub
     GROUP BY bucket
     ORDER BY MIN(days) DESC
-  `)
+  `, [userId])
 
   const noEmailRow = await queryOne<{ n: number }>(
-    `SELECT COUNT(*) as n FROM contacts WHERE email IS NULL OR email = ''`
+    `SELECT COUNT(*) as n FROM contacts WHERE user_id = ? AND (email IS NULL OR email = '')`,
+    [userId]
   )
   const noEmail = noEmailRow?.n || 0
 
   const topActive = await query(`
     SELECT name, message_count, last_contact_at,
       EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer AS days_since
-    FROM contacts ORDER BY message_count DESC LIMIT 20
-  `)
+    FROM contacts WHERE user_id = ? ORDER BY message_count DESC LIMIT 20
+  `, [userId])
 
   const overdue = await query(`
     SELECT name, email, message_count, last_contact_at,
       EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer AS days_since
-    FROM contacts WHERE last_contact_at IS NOT NULL
+    FROM contacts WHERE last_contact_at IS NOT NULL AND user_id = ?
     ORDER BY days_since DESC LIMIT 20
-  `)
+  `, [userId])
 
   const recent = await query(`
     SELECT name, email, message_count, last_contact_at
-    FROM contacts WHERE last_contact_at::timestamp >= NOW() - INTERVAL '30 days'
+    FROM contacts WHERE user_id = ? AND last_contact_at::timestamp >= NOW() - INTERVAL '30 days'
     ORDER BY last_contact_at DESC LIMIT 20
-  `)
+  `, [userId])
 
   return NextResponse.json({ total, totalMsgs, noEmail, buckets, topActive, overdue, recent })
 }

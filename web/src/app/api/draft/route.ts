@@ -26,19 +26,19 @@ export async function POST(req: NextRequest) {
   }
 
   const contactName = typeof contact_id === 'number'
-    ? (await queryOne<{ name: string }>('SELECT name FROM contacts WHERE id = ?', [contact_id]))?.name
+    ? (await queryOne<{ name: string }>('SELECT name FROM contacts WHERE id = ? AND user_id = ?', [contact_id, userId]))?.name
     : contact_id
 
   // Get recent messages for context
   const recentMsgs = await query<any>(`
     SELECT direction, content, timestamp FROM messages
-    WHERE contact_name = ? ORDER BY timestamp DESC LIMIT 10
-  `, [contactName || ''])
+    WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 10
+  `, [contactName || '', userId])
 
   // Get summary
   const summaryRow = await queryOne<{ summary: string }>(
-    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND summary IS NOT NULL`,
-    [contactName || '']
+    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL`,
+    [contactName || '', userId]
   )
 
   const context = [

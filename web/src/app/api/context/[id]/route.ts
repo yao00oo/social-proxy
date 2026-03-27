@@ -18,15 +18,15 @@ export async function GET(
       CASE WHEN last_contact_at IS NULL THEN 9999
         ELSE EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer
       END AS days_since
-    FROM contacts WHERE name = ?
-  `, [name])
+    FROM contacts WHERE name = ? AND user_id = ?
+  `, [name, userId])
 
   if (!contact) {
     return NextResponse.json({ error: '联系人不存在' }, { status: 404 })
   }
 
   const summaryRow = await queryOne<{ summary: string }>(
-    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND summary IS NOT NULL`, [name]
+    `SELECT summary FROM chat_summaries WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL`, [name, userId]
   )
 
   return NextResponse.json({

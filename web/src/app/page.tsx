@@ -66,7 +66,12 @@ function formatRelativeTime(dateStr: string | null): string {
   return `${Math.floor(days / 30)}月前`
 }
 
-function timeStr(ts: string): string { return ts?.slice(11, 16) || '' }
+function timeStr(ts: string): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ts?.slice(11, 16) || ''
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
 function getInitial(name: string): string { return name.charAt(0) }
 function nowTime(): string { return new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }
 
@@ -717,7 +722,7 @@ export default function HomePage() {
               {newMessages.filter(m => m.contact_name === selectedName).slice(0, 5).map(m => (
                 <div key={m.id} className="space-y-1">
                   <p className="text-xs text-on-surface">{m.incoming_content}</p>
-                  <span className="text-[10px] text-outline">{m.created_at.slice(0, 16)} {m.is_at_me && <span className="text-accent-orange font-bold">@我</span>}</span>
+                  <span className="text-[10px] text-outline">{timeStr(m.created_at)} {m.is_at_me && <span className="text-accent-orange font-bold">@我</span>}</span>
                   {m.suggestion && <div className="bg-primary-fixed/20 rounded-lg p-2"><p className="text-[10px] text-primary font-bold mb-0.5">建议回复</p><p className="text-xs text-on-surface-variant">{m.suggestion}</p></div>}
                 </div>
               ))}

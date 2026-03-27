@@ -15,8 +15,8 @@ export async function GET(
 
   const messages = await query(`
     SELECT direction, content, timestamp FROM messages
-    WHERE contact_name = ? ORDER BY timestamp DESC LIMIT 20
-  `, [name])
+    WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT 20
+  `, [name, userId])
 
   return NextResponse.json({ messages })
 }
@@ -39,12 +39,12 @@ export async function POST(
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
 
   await exec(`
-    INSERT INTO messages(contact_name, direction, content, timestamp) VALUES (?, ?, ?, ?)
-  `, [name, direction, content, now])
+    INSERT INTO messages(contact_name, direction, content, timestamp, user_id) VALUES (?, ?, ?, ?, ?)
+  `, [name, direction, content, now, userId])
 
   await exec(`
-    UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?
-  `, [now, name])
+    UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ? AND user_id = ?
+  `, [now, name, userId])
 
   return NextResponse.json({ success: true }, { status: 201 })
 }

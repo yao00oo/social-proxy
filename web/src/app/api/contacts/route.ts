@@ -10,8 +10,8 @@ export async function GET(req: NextRequest) {
   const search = req.nextUrl.searchParams.get('search') || undefined
   const limit = Math.min(parseInt(req.nextUrl.searchParams.get('limit') || '50'), 200)
 
-  const where = search ? `WHERE name LIKE '%' || ? || '%'` : ''
-  const params: any[] = search ? [search] : []
+  const where = search ? `WHERE user_id = ? AND name LIKE '%' || ? || '%'` : 'WHERE user_id = ?'
+  const params: any[] = search ? [userId, search] : [userId]
 
   const contacts = await query(`
     SELECT

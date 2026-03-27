@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   }
 
   const contact = await queryOne<{ name: string; email: string }>(
-    'SELECT name, email FROM contacts WHERE name = ?', [contact_name]
+    'SELECT name, email FROM contacts WHERE name = ? AND user_id = ?', [contact_name, userId]
   )
 
   if (!contact) {
@@ -67,12 +67,12 @@ export async function POST(req: NextRequest) {
     // Record
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
     await exec(
-      'INSERT INTO messages(contact_name, direction, content, timestamp) VALUES (?, ?, ?, ?)',
-      [contact_name, 'sent', `[邮件] 主题: ${emailSubject}\n\n${body}`, now]
+      'INSERT INTO messages(contact_name, direction, content, timestamp, user_id) VALUES (?, ?, ?, ?, ?)',
+      [contact_name, 'sent', `[邮件] 主题: ${emailSubject}\n\n${body}`, now, userId]
     )
     await exec(
-      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?',
-      [now, contact_name]
+      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ? AND user_id = ?',
+      [now, contact_name, userId]
     )
 
     return NextResponse.json({

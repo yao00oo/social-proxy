@@ -1,4 +1,4 @@
-// GET /api/contacts/[name] — 联系人详情 + 聊天记录（移植自 MCP get_history）
+// GET /api/contacts/[name] — 联系人详情 + 聊天记录
 import { NextRequest, NextResponse } from 'next/server'
 import { query, queryOne } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -20,8 +20,8 @@ export async function GET(
       CASE WHEN last_contact_at IS NULL THEN 9999
         ELSE EXTRACT(DAY FROM NOW() - last_contact_at::timestamp)::integer
       END AS days_since_last_contact
-    FROM contacts WHERE name = ?
-  `, [name])
+    FROM contacts WHERE name = ? AND user_id = ?
+  `, [name, userId])
 
   if (!contact) {
     return NextResponse.json({ error: '联系人不存在' }, { status: 404 })
@@ -29,23 +29,23 @@ export async function GET(
 
   // Total message count
   const totalRow = await queryOne<{ n: number }>(
-    'SELECT COUNT(*) as n FROM messages WHERE contact_name = ?', [name]
+    'SELECT COUNT(*) as n FROM messages WHERE contact_name = ? AND user_id = ?', [name, userId]
   )
   const total = totalRow?.n || 0
 
-  // Recent messages
+  // Recent messages (latest 50, ordered ascending)
   const messages = await query(`
     SELECT direction, content, timestamp, sender_name
     FROM (
       SELECT direction, content, timestamp, sender_name FROM messages
-      WHERE contact_name = ? ORDER BY timestamp DESC LIMIT ?
+      WHERE contact_name = ? AND user_id = ? ORDER BY timestamp DESC LIMIT ?
     ) sub ORDER BY timestamp ASC
-  `, [name, limit])
+  `, [name, userId, limit])
 
   // Summary if exists
   const summaryRow = await queryOne<{ summary: string; start_time: string; end_time: string }>(
     `SELECT summary, start_time, end_time FROM chat_summaries
-     WHERE chat_name = ? AND summary IS NOT NULL`, [name]
+     WHERE chat_name = ? AND user_id = ? AND summary IS NOT NULL`, [name, userId]
   )
 
   return NextResponse.json({

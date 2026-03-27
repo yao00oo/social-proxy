@@ -19,20 +19,20 @@ export async function POST(req: NextRequest) {
   let receiveIdType: 'open_id' | 'chat_id' = 'open_id'
 
   const userRow = await queryOne<{ open_id: string }>(
-    'SELECT open_id FROM feishu_users WHERE name = ? LIMIT 1', [contact_name]
+    'SELECT open_id FROM feishu_users WHERE name = ? AND user_id = ? LIMIT 1', [contact_name, userId]
   )
   if (userRow) {
     receiveId = userRow.open_id
   } else {
     const contactRow = await queryOne<{ feishu_open_id: string }>(
-      'SELECT feishu_open_id FROM contacts WHERE name = ? AND feishu_open_id IS NOT NULL', [contact_name]
+      'SELECT feishu_open_id FROM contacts WHERE name = ? AND user_id = ? AND feishu_open_id IS NOT NULL', [contact_name, userId]
     )
     receiveId = contactRow?.feishu_open_id ?? null
   }
 
   if (!receiveId) {
     const stateRow = await queryOne<{ chat_id: string }>(
-      'SELECT chat_id FROM feishu_sync_state WHERE chat_name = ? LIMIT 1', [contact_name]
+      'SELECT chat_id FROM feishu_sync_state WHERE chat_name = ? AND user_id = ? LIMIT 1', [contact_name, userId]
     )
     if (!stateRow) {
       return NextResponse.json({
@@ -63,12 +63,12 @@ export async function POST(req: NextRequest) {
     // 4. Record in messages table
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
     await exec(
-      'INSERT INTO messages(contact_name, direction, content, timestamp, source_id) VALUES (?, ?, ?, ?, ?)',
-      [contact_name, 'sent', content, now, message_id]
+      'INSERT INTO messages(contact_name, direction, content, timestamp, source_id, user_id) VALUES (?, ?, ?, ?, ?, ?)',
+      [contact_name, 'sent', content, now, message_id, userId]
     )
     await exec(
-      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ?',
-      [now, contact_name]
+      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ? AND user_id = ?',
+      [now, contact_name, userId]
     )
 
     return NextResponse.json({

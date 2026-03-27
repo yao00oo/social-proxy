@@ -126,9 +126,8 @@ async function ensureValidToken(userId: string): Promise<string> {
 
 // ── Time helpers ──
 function toLocalTime(ms: number): string {
-  const d = new Date(ms)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  // 存 ISO 8601 格式，保留时区信息，前端可按用户本地时区显示
+  return new Date(ms).toISOString()
 }
 
 // ── Message content parsing ──
