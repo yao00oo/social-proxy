@@ -233,6 +233,25 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 - **images/ 不提交**：.gitignore 已配置
 - **.env.local 不提交**：敏感信息通过 Vercel 环境变量管理
 
+## TODO
+
+### 高优先级（核心功能）
+- [ ] 飞书同步调试：同步能跑但需验证最新修复（排序、续传、进度显示）
+- [ ] 飞书 p2p 单聊同步：listChats 不返回单聊，需要用搜索 API 发现 chat_id
+- [x] 飞书发送者姓名：用 open_id 查 feishu_users 表获取姓名
+
+### 中优先级（数据源）
+- [ ] Gmail 同步：API route 是 stub，需要用 PG 重写
+- [ ] 邮件同步（IMAP）：同上
+- [ ] 微信导入：前端有 UI，后端已转 PG 但未测试
+- [ ] 飞书文档同步：API route 是 stub
+
+### 低优先级（体验优化）
+- [ ] 飞书授权后自动触发同步
+- [ ] 主页联系人和消息展示验证（依赖同步数据）
+- [ ] AI 对话工具调用验证（PG 异步查询已改）
+- [ ] 设置页卡片展开/折叠细节完善
+
 <!-- VERCEL BEST PRACTICES START -->
 ## Vercel 开发最佳实践
 
