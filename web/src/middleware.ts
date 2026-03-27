@@ -7,7 +7,9 @@ export function middleware(request: NextRequest) {
   const isLoginPage = request.nextUrl.pathname.startsWith('/login')
   const isAuthApi = request.nextUrl.pathname.startsWith('/api/auth')
   const isHealthApi = request.nextUrl.pathname.startsWith('/api/health')
-  const isPublic = isLoginPage || isAuthApi || isHealthApi
+  const isAgentApi = request.nextUrl.pathname.startsWith('/api/agent-sync') || request.nextUrl.pathname.startsWith('/api/auth/device')
+  const isStaticFile = request.nextUrl.pathname.endsWith('.sh') || request.nextUrl.pathname.endsWith('.ps1')
+  const isPublic = isLoginPage || isAuthApi || isHealthApi || isAgentApi || isStaticFile
 
   if (!token && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
