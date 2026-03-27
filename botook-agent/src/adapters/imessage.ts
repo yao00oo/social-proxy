@@ -47,7 +47,7 @@ function openDb(): Database.Database {
  */
 function getChatNames(db: Database.Database): Map<number, string> {
   const rows = db
-    .prepare('SELECT ROWID, display_name FROM chat WHERE display_name IS NOT NULL AND display_name != ""')
+    .prepare("SELECT ROWID, display_name FROM chat WHERE display_name IS NOT NULL AND display_name != ''")
     .all() as { ROWID: number; display_name: string }[];
 
   const map = new Map<number, string>();
