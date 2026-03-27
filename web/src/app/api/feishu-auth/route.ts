@@ -33,8 +33,8 @@ export async function POST(req: NextRequest) {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const appId = process.env.FEISHU_APP_ID
-  if (!appId) return NextResponse.json({ error: '未配置飞书 App ID（环境变量 FEISHU_APP_ID）' }, { status: 400 })
+  const appId = process.env.FEISHU_APP_ID || (await queryOne<{ value: string }>('SELECT value FROM settings WHERE key=? AND user_id=?', ['feishu_app_id', userId]))?.value
+  if (!appId) return NextResponse.json({ error: '未配置飞书 App ID，请先在设置页面填写' }, { status: 400 })
 
   const state = crypto.randomBytes(16).toString('hex')
   await exec(`INSERT INTO settings(user_id,key,value) VALUES(?,?,?) ON CONFLICT(user_id,key) DO UPDATE SET value=excluded.value`, [userId, 'feishu_oauth_state', state])

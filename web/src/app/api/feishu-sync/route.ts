@@ -83,8 +83,8 @@ async function ensureValidToken(userId: string): Promise<string> {
   const token = await getSetting('feishu_user_access_token', userId)
   const tokenTime = parseInt(await getSetting('feishu_token_time', userId) || '0', 10)
   const refreshTk = await getSetting('feishu_refresh_token', userId)
-  const appId = process.env.FEISHU_APP_ID
-  const appSecret = process.env.FEISHU_APP_SECRET
+  const appId = process.env.FEISHU_APP_ID || await getSetting('feishu_app_id', userId)
+  const appSecret = process.env.FEISHU_APP_SECRET || await getSetting('feishu_app_secret', userId)
 
   if (!token) throw new Error('未授权，请先在配置页面完成飞书 OAuth 授权')
 
@@ -92,7 +92,7 @@ async function ensureValidToken(userId: string): Promise<string> {
   const age = Date.now() - tokenTime
   if (age > (2 * 60 - 5) * 60 * 1000 && refreshTk) {
     // Get app access token first
-    if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret（环境变量）')
+    if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret，请先在设置页面填写')
     const appRes = await feishuPost('/auth/v3/app_access_token/internal', { app_id: appId, app_secret: appSecret })
     if (appRes.code !== 0) throw new Error(`getAppAccessToken: ${appRes.msg}`)
     const appToken = appRes.app_access_token

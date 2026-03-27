@@ -1,6 +1,6 @@
 // POST /api/feishu-complete — 前端拿到 code 后调此接口换 token
 import { NextRequest, NextResponse } from 'next/server'
-import { exec } from '@/lib/db'
+import { exec, queryOne } from '@/lib/db'
 import https from 'https'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
@@ -29,9 +29,9 @@ export async function POST(req: NextRequest) {
   const { code } = await req.json() as { code: string }
   if (!code) return NextResponse.json({ error: '缺少 code' }, { status: 400 })
 
-  const appId = process.env.FEISHU_APP_ID
-  const appSecret = process.env.FEISHU_APP_SECRET
-  if (!appId || !appSecret) return NextResponse.json({ error: '未配置飞书 App ID/Secret（环境变量）' }, { status: 500 })
+  const appId = process.env.FEISHU_APP_ID || (await queryOne<{ value: string }>('SELECT value FROM settings WHERE key=? AND user_id=?', ['feishu_app_id', userId]))?.value
+  const appSecret = process.env.FEISHU_APP_SECRET || (await queryOne<{ value: string }>('SELECT value FROM settings WHERE key=? AND user_id=?', ['feishu_app_secret', userId]))?.value
+  if (!appId || !appSecret) return NextResponse.json({ error: '未配置飞书 App ID/Secret，请先在设置页面填写' }, { status: 500 })
 
   // 1. 获取 app_access_token
   const appTokenRes = await httpsPost(

@@ -39,11 +39,15 @@ export async function getSetting(key: string, userId?: string): Promise<string> 
   return row?.value || ''
 }
 
-// Get app access token
-export async function getAppAccessToken(): Promise<string> {
-  const appId = process.env.FEISHU_APP_ID
-  const appSecret = process.env.FEISHU_APP_SECRET
-  if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret（环境变量 FEISHU_APP_ID / FEISHU_APP_SECRET）')
+// Get app access token — tries env vars first, falls back to user settings
+export async function getAppAccessToken(userId?: string): Promise<string> {
+  let appId = process.env.FEISHU_APP_ID
+  let appSecret = process.env.FEISHU_APP_SECRET
+  if ((!appId || !appSecret) && userId) {
+    appId = appId || await getSetting('feishu_app_id', userId)
+    appSecret = appSecret || await getSetting('feishu_app_secret', userId)
+  }
+  if (!appId || !appSecret) throw new Error('未配置飞书 App ID / App Secret，请先在设置页面填写')
   const res = await post('/auth/v3/app_access_token/internal', { app_id: appId, app_secret: appSecret })
   if (res.code !== 0) throw new Error(`getAppAccessToken: ${res.msg}`)
   return res.app_access_token

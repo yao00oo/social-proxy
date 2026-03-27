@@ -17,6 +17,8 @@ interface Settings {
   imap_pass: string
   gmail_client_id: string
   gmail_client_secret: string
+  feishu_app_id: string
+  feishu_app_secret: string
 }
 
 const defaultSettings: Settings = {
@@ -32,6 +34,8 @@ const defaultSettings: Settings = {
   imap_pass: '',
   gmail_client_id: '',
   gmail_client_secret: '',
+  feishu_app_id: '',
+  feishu_app_secret: '',
 }
 
 // ---------- Sub-components ----------
@@ -62,6 +66,16 @@ function LogPanel({ log, running, label = '同步中...' }: { log: string[]; run
       {log.map((l, i) => <div key={i}>{l}</div>)}
       {running && <div className="text-primary animate-pulse">{label}</div>}
     </div>
+  )
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }}
+      className="text-[10px] px-2 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest transition-colors cursor-pointer">
+      {copied ? '已复制' : '复制'}
+    </button>
   )
 }
 
@@ -166,6 +180,239 @@ function SectionHeader({ icon, title, badge, badgeColor }: { icon: string; title
   )
 }
 
+// ---------- Feishu Stepper ----------
+
+const FEISHU_PERMISSIONS = [
+  { name: 'im:chat:readonly', desc: '获取会话列表' },
+  { name: 'im:message:readonly', desc: '读取消息' },
+  { name: 'im:message.group_msg:get_as_user', desc: '读取群消息' },
+  { name: 'contact:contact:readonly', desc: '读取通讯录' },
+  { name: 'drive:drive:readonly', desc: '读取云文档' },
+  { name: 'docx:document:readonly', desc: '读取文档内容' },
+]
+
+const FEISHU_STEPS = [
+  { title: '创建飞书应用' },
+  { title: '开通权限' },
+  { title: '配置回调地址' },
+  { title: '填写凭证' },
+  { title: '发布应用' },
+  { title: '授权' },
+]
+
+function FeishuStepper({
+  step,
+  setStep,
+  settings,
+  setSettings,
+  onSaveCredentials,
+  savingCredentials,
+  savedCredentials,
+  onAuth,
+  authing,
+  authUrl,
+  authed,
+  userName,
+}: {
+  step: number
+  setStep: (s: number) => void
+  settings: Settings
+  setSettings: (s: Settings) => void
+  onSaveCredentials: () => Promise<void>
+  savingCredentials: boolean
+  savedCredentials: boolean
+  onAuth: () => void
+  authing: boolean
+  authUrl: string
+  authed: boolean
+  userName: string
+}) {
+  return (
+    <div className="space-y-4">
+      {/* Step indicators */}
+      <div className="flex items-center gap-1">
+        {FEISHU_STEPS.map((s, i) => {
+          const stepNum = i + 1
+          const isActive = step === stepNum
+          const isCompleted = step > stepNum || (stepNum === 6 && authed)
+          return (
+            <div key={i} className="flex items-center gap-1">
+              {i > 0 && <div className={`w-4 h-px ${isCompleted ? 'bg-teal-400' : 'bg-outline-variant'}`} />}
+              <button
+                onClick={() => setStep(stepNum)}
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium transition-colors cursor-pointer ${
+                  isCompleted
+                    ? 'bg-teal-500 text-white'
+                    : isActive
+                      ? 'bg-primary text-on-primary'
+                      : 'border border-outline-variant text-outline'
+                }`}
+              >
+                {isCompleted ? (
+                  <span className="material-symbols-outlined text-sm">check</span>
+                ) : stepNum}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Step title */}
+      <p className="text-sm font-medium text-on-surface">
+        步骤 {step}：{FEISHU_STEPS[step - 1].title}
+      </p>
+
+      {/* Step 1: Create app */}
+      {step === 1 && (
+        <div className="space-y-3">
+          <p className="text-xs text-on-surface-variant">在飞书开放平台创建一个企业自建应用</p>
+          <a
+            href="https://open.feishu.cn/app"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors"
+          >
+            <span className="material-symbols-outlined text-base">open_in_new</span>
+            打开飞书开放平台
+          </a>
+          <p className="text-xs text-outline leading-relaxed">
+            点击「创建企业自建应用」 → 填写应用名称（如「社交助手」） → 点击创建
+          </p>
+          <div className="flex justify-end">
+            <button onClick={() => setStep(2)}
+              className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium hover:bg-primary-container transition-colors cursor-pointer">
+              下一步
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 2: Permissions */}
+      {step === 2 && (
+        <div className="space-y-3">
+          <p className="text-xs text-on-surface-variant">在应用的「权限管理」页面，搜索并开通以下权限：</p>
+          <div className="space-y-2">
+            {FEISHU_PERMISSIONS.map((perm) => (
+              <div key={perm.name} className="flex items-center gap-2 bg-surface rounded-lg px-3 py-2">
+                <code className="text-xs font-mono text-primary flex-1">{perm.name}</code>
+                <span className="text-xs text-outline">{perm.desc}</span>
+                <CopyButton text={perm.name} />
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between">
+            <button onClick={() => setStep(1)}
+              className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium hover:bg-surface-container-highest transition-colors cursor-pointer">
+              上一步
+            </button>
+            <button onClick={() => setStep(3)}
+              className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium hover:bg-primary-container transition-colors cursor-pointer">
+              下一步
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Callback URL */}
+      {step === 3 && (
+        <div className="space-y-3">
+          <p className="text-xs text-on-surface-variant">在应用的「安全设置」页面，添加重定向 URL：</p>
+          <div className="flex items-center gap-2 bg-surface rounded-lg px-3 py-2.5">
+            <code className="text-xs font-mono text-primary flex-1 break-all">https://relay.botook.ai/feishu/callback</code>
+            <CopyButton text="https://relay.botook.ai/feishu/callback" />
+          </div>
+          <div className="flex justify-between">
+            <button onClick={() => setStep(2)}
+              className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium hover:bg-surface-container-highest transition-colors cursor-pointer">
+              上一步
+            </button>
+            <button onClick={() => setStep(4)}
+              className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium hover:bg-primary-container transition-colors cursor-pointer">
+              下一步
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 4: Credentials */}
+      {step === 4 && (
+        <div className="space-y-3">
+          <p className="text-xs text-on-surface-variant">在应用的「凭证与基础信息」页面，复制 App ID 和 App Secret 填入下方：</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Input label="App ID" value={settings.feishu_app_id} onChange={(v) => setSettings({ ...settings, feishu_app_id: v })} placeholder="cli_xxxxx" />
+            <Input label="App Secret" type="password" value={settings.feishu_app_secret} onChange={(v) => setSettings({ ...settings, feishu_app_secret: v })} placeholder="xxxxx" />
+          </div>
+          <div className="flex justify-between">
+            <button onClick={() => setStep(3)}
+              className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium hover:bg-surface-container-highest transition-colors cursor-pointer">
+              上一步
+            </button>
+            <button onClick={async () => { await onSaveCredentials(); setStep(5) }}
+              disabled={!settings.feishu_app_id || !settings.feishu_app_secret || savingCredentials}
+              className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium hover:bg-primary-container transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              {savingCredentials ? '保存中...' : savedCredentials ? '已保存' : '保存并继续'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 5: Publish app */}
+      {step === 5 && (
+        <div className="space-y-3">
+          <p className="text-xs text-on-surface-variant">在「版本管理与发布」页面，创建版本并提交审核</p>
+          <p className="text-xs text-outline">如果你是企业管理员，审核会立即通过</p>
+          <div className="flex justify-between">
+            <button onClick={() => setStep(4)}
+              className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium hover:bg-surface-container-highest transition-colors cursor-pointer">
+              上一步
+            </button>
+            <button onClick={() => setStep(6)}
+              className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium hover:bg-primary-container transition-colors cursor-pointer">
+              下一步
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Step 6: Authorize */}
+      {step === 6 && (
+        <div className="space-y-3">
+          <p className="text-xs text-on-surface-variant">一切就绪！点击下方按钮完成飞书授权</p>
+          <div className="flex items-center gap-3">
+            {authed ? (
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 rounded-full bg-teal-500" />
+                <span className="text-sm text-teal-700">已授权：{userName}</span>
+              </div>
+            ) : (
+              <button onClick={onAuth} disabled={authing}
+                className="px-4 py-2.5 rounded-xl bg-primary text-on-primary text-sm font-medium hover:bg-primary-container transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+                {authing ? '等待授权...' : '授权飞书'}
+              </button>
+            )}
+          </div>
+          {/* Auth URL fallback */}
+          {authUrl && !authed && (
+            <div className="p-3 bg-accent-orange/5 border border-accent-orange/20 rounded-xl">
+              <p className="text-accent-orange text-xs mb-2">如果弹窗未打开，点击下方链接完成飞书授权：</p>
+              <a href={authUrl} target="_blank" rel="noreferrer"
+                className="text-secondary text-sm underline break-all">
+                点击授权飞书账号
+              </a>
+            </div>
+          )}
+          <div className="flex justify-start">
+            <button onClick={() => setStep(5)}
+              className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium hover:bg-surface-container-highest transition-colors cursor-pointer">
+              上一步
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ---------- Doc Sync Section (state kept internal) ----------
 
 function useDocSync() {
@@ -208,6 +455,9 @@ export default function SettingsPage() {
   const [feishuResult, setFeishuResult] = useState<any>(null)
   const [autoSync, setAutoSync] = useState(true)
   const [autoSyncSeconds, setAutoSyncSeconds] = useState(15)
+  const [feishuStep, setFeishuStep] = useState(1)
+  const [feishuCredSaving, setFeishuCredSaving] = useState(false)
+  const [feishuCredSaved, setFeishuCredSaved] = useState(false)
 
   // Gmail OAuth
   const [gmailAuthed, setGmailAuthed] = useState(false)
@@ -258,6 +508,21 @@ export default function SettingsPage() {
     setSettingsSaving(false)
     setSettingsSaved(true)
     setTimeout(() => setSettingsSaved(false), 2000)
+  }
+
+  const saveFeishuCredentials = async () => {
+    setFeishuCredSaving(true)
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        feishu_app_id: settings.feishu_app_id,
+        feishu_app_secret: settings.feishu_app_secret,
+      }),
+    })
+    setFeishuCredSaving(false)
+    setFeishuCredSaved(true)
+    setTimeout(() => setFeishuCredSaved(false), 2000)
   }
 
   // ---------- Init ----------
@@ -461,7 +726,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* ═══ Section 1: 让小林了解你 ═══ */}
+        {/* Section 1: 让小林了解你 */}
         <div className="mb-8">
           <SectionHeader icon="psychology" title="让小林了解你" />
           <div className="grid grid-cols-3 gap-3">
@@ -532,108 +797,107 @@ export default function SettingsPage() {
                   <span className="material-symbols-outlined text-lg">close</span>
                 </button>
               </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                {feishuAuthed ? (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-teal-500" />
-                    <span className="text-sm text-teal-700">已授权：{feishuUserName}</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-slate-300" />
-                    <span className="text-sm text-outline">未授权</span>
-                  </div>
-                )}
-                <button onClick={handleFeishuAuth} disabled={feishuAuthing}
-                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
-                  {feishuAuthing ? '等待授权...' : feishuAuthed ? '重新授权' : '授权飞书账号'}
-                </button>
-                {feishuAuthed && (
-                  <button onClick={handleFeishuSync} disabled={feishuSyncing}
-                    className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-surface-container-highest">
-                    {feishuSyncing ? '同步中...' : '立即同步'}
-                  </button>
-                )}
-              </div>
 
-              {/* Auto sync */}
-              {feishuAuthed && (
-                <div className="flex items-center gap-3 flex-wrap">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoSync}
+              {feishuAuthed ? (
+                <>
+                  {/* Connected state: show status + sync controls */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-teal-500" />
+                      <span className="text-sm text-teal-700">已授权：{feishuUserName}</span>
+                    </div>
+                    <button onClick={handleFeishuAuth} disabled={feishuAuthing}
+                      className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
+                      {feishuAuthing ? '等待授权...' : '重新授权'}
+                    </button>
+                    <button onClick={handleFeishuSync} disabled={feishuSyncing}
+                      className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-surface-container-highest">
+                      {feishuSyncing ? '同步中...' : '立即同步'}
+                    </button>
+                  </div>
+
+                  {/* Auto sync */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={autoSync}
+                        onChange={async (e) => {
+                          const enabled = e.target.checked
+                          setAutoSync(enabled)
+                          await fetch('/api/feishu-sync', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ autoSyncSeconds: enabled ? autoSyncSeconds : 0 }),
+                          })
+                        }}
+                        className="accent-primary w-4 h-4"
+                      />
+                      <span className="text-sm text-on-surface">自动同步</span>
+                    </label>
+                    <select
+                      value={autoSyncSeconds}
                       onChange={async (e) => {
-                        const enabled = e.target.checked
-                        setAutoSync(enabled)
-                        await fetch('/api/feishu-sync', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ autoSyncSeconds: enabled ? autoSyncSeconds : 0 }),
-                        })
+                        const secs = Number(e.target.value)
+                        setAutoSyncSeconds(secs)
+                        if (autoSync) {
+                          await fetch('/api/feishu-sync', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ autoSyncSeconds: secs }),
+                          })
+                        }
                       }}
-                      className="accent-primary w-4 h-4"
-                    />
-                    <span className="text-sm text-on-surface">自动同步</span>
-                  </label>
-                  <select
-                    value={autoSyncSeconds}
-                    onChange={async (e) => {
-                      const secs = Number(e.target.value)
-                      setAutoSyncSeconds(secs)
-                      if (autoSync) {
-                        await fetch('/api/feishu-sync', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ autoSyncSeconds: secs }),
-                        })
-                      }
-                    }}
-                    disabled={!autoSync}
-                    className="bg-surface border border-outline-variant rounded-xl px-3 py-2 text-on-surface text-sm focus:outline-none disabled:opacity-40"
-                  >
-                    <option value={15}>每 15 秒</option>
-                    <option value={30}>每 30 秒</option>
-                    <option value={60}>每 1 分钟</option>
-                    <option value={300}>每 5 分钟</option>
-                    <option value={600}>每 10 分钟</option>
-                  </select>
-                  {autoSync && <span className="text-xs text-primary">● 运行中</span>}
-                </div>
-              )}
+                      disabled={!autoSync}
+                      className="bg-surface border border-outline-variant rounded-xl px-3 py-2 text-on-surface text-sm focus:outline-none disabled:opacity-40"
+                    >
+                      <option value={15}>每 15 秒</option>
+                      <option value={30}>每 30 秒</option>
+                      <option value={60}>每 1 分钟</option>
+                      <option value={300}>每 5 分钟</option>
+                      <option value={600}>每 10 分钟</option>
+                    </select>
+                    {autoSync && <span className="text-xs text-primary">● 运行中</span>}
+                  </div>
 
-              {/* Auth URL fallback */}
-              {feishuAuthUrl && !feishuAuthed && (
-                <div className="p-3 bg-accent-orange/5 border border-accent-orange/20 rounded-xl">
-                  <p className="text-accent-orange text-xs mb-2">点击下方链接完成飞书授权：</p>
-                  <a href={feishuAuthUrl} target="_blank" rel="noreferrer"
-                    className="text-secondary text-sm underline break-all"
-                    onClick={() => setFeishuAuthUrl('')}>
-                    点击授权飞书账号
-                  </a>
-                </div>
-              )}
-
-              {/* Sync log */}
-              {(feishuLog.length > 0 || feishuResult) && (
-                <div>
-                  <LogPanel log={feishuLog} running={feishuSyncing} />
-                  {feishuResult && !feishuResult.error && (
-                    <p className="text-sm text-on-surface-variant mt-2">
-                      同步完成：导入 <span className="text-primary font-mono font-semibold">{feishuResult.imported}</span> 条，
-                      处理 <span className="font-mono">{feishuResult.chats}</span> 个会话
-                      {feishuResult.errors?.length > 0 && (
-                        <span className="text-accent-orange">，{feishuResult.errors.length} 个错误</span>
+                  {/* Sync log */}
+                  {(feishuLog.length > 0 || feishuResult) && (
+                    <div>
+                      <LogPanel log={feishuLog} running={feishuSyncing} />
+                      {feishuResult && !feishuResult.error && (
+                        <p className="text-sm text-on-surface-variant mt-2">
+                          同步完成：导入 <span className="text-primary font-mono font-semibold">{feishuResult.imported}</span> 条，
+                          处理 <span className="font-mono">{feishuResult.chats}</span> 个会话
+                          {feishuResult.errors?.length > 0 && (
+                            <span className="text-accent-orange">，{feishuResult.errors.length} 个错误</span>
+                          )}
+                        </p>
                       )}
-                    </p>
+                    </div>
                   )}
-                </div>
+                </>
+              ) : (
+                /* Not connected: show guided stepper */
+                <FeishuStepper
+                  step={feishuStep}
+                  setStep={setFeishuStep}
+                  settings={settings}
+                  setSettings={setSettings}
+                  onSaveCredentials={saveFeishuCredentials}
+                  savingCredentials={feishuCredSaving}
+                  savedCredentials={feishuCredSaved}
+                  onAuth={handleFeishuAuth}
+                  authing={feishuAuthing}
+                  authUrl={feishuAuthUrl}
+                  authed={feishuAuthed}
+                  userName={feishuUserName}
+                />
               )}
             </div>
           )}
         </div>
 
-        {/* ═══ Section 2: 让小林帮你发送消息 ═══ */}
+        {/* Section 2: 让小林帮你发送消息 */}
         <div className="mb-8">
           <SectionHeader
             icon="send"
@@ -775,7 +1039,7 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* ═══ Section 3: 让小林监听新消息 ═══ */}
+        {/* Section 3: 让小林监听新消息 */}
         <div className="mb-8">
           <SectionHeader
             icon="notifications_active"
@@ -851,7 +1115,7 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* ═══ Section 4: 让小林读取你的文件 ═══ */}
+        {/* Section 4: 让小林读取你的文件 */}
         <div className="mb-8">
           <SectionHeader
             icon="folder_open"

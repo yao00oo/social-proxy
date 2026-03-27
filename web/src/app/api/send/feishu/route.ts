@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
 
   // 3. Send via app bot
   try {
-    const appToken = await getAppAccessToken()
+    const appToken = await getAppAccessToken(userId)
     const { message_id } = await sendMessage(appToken, receiveId!, content, receiveIdType)
 
     // 4. Record in messages table
