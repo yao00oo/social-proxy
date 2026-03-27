@@ -259,11 +259,18 @@ async function listMessages(
 
 // ── Full sync ──
 async function fullSync(userId: string) {
-  const log = (msg: string) => {
+  const log = async (msg: string) => {
     console.log(`[feishu-sync] ${msg}`)
     syncLog.push(msg)
-    // Keep log bounded
     if (syncLog.length > 200) syncLog = syncLog.slice(-100)
+    // Persist status to DB so GET can read it from any serverless instance
+    try {
+      await exec(
+        `INSERT INTO settings(user_id, key, value) VALUES(?, 'feishu_sync_status', ?)
+         ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
+        [userId, JSON.stringify({ running: true, log: syncLog.slice(-50), lastResult: lastResult })]
+      )
+    } catch {}
   }
 
   const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[], done: false, remaining: 0 }
@@ -468,6 +475,15 @@ async function fullSync(userId: string) {
   if (!result.remaining) result.done = true
   lastResult = result
   syncRunning = false
+
+  // Persist final status
+  try {
+    await exec(
+      `INSERT INTO settings(user_id, key, value) VALUES(?, 'feishu_sync_status', ?)
+       ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
+      [userId, JSON.stringify({ running: false, log: syncLog.slice(-50), lastResult })]
+    )
+  } catch {}
 }
 
 // ── Quick sync (for auto-sync, only recent chats) ──
@@ -579,10 +595,15 @@ async function quickSync(userId: string) {
 export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
+
+  // Read sync status from DB (Vercel serverless instances don't share memory)
+  const statusRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key = 'feishu_sync_status' AND user_id = ?`, [userId])
+  const dbStatus = statusRow?.value ? JSON.parse(statusRow.value) : null
+
   return NextResponse.json({
-    running: syncRunning,
-    log: syncLog.slice(-50),
-    lastResult,
+    running: dbStatus?.running || syncRunning,
+    log: dbStatus?.log || syncLog.slice(-50),
+    lastResult: dbStatus?.lastResult || lastResult,
     autoSync: autoSyncSeconds > 0,
     autoSyncSeconds,
   })
