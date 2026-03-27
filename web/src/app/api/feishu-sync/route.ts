@@ -18,6 +18,7 @@ import {
   insertUnifiedMessage,
   buildSenderNameCache,
 } from '@/lib/sync-helpers'
+import { generateSummaries } from '@/lib/summarize'
 import https from 'https'
 
 // ── Module-level state ──
@@ -477,6 +478,13 @@ async function fullSync(userId: string) {
   if (!result.remaining) result.done = true
   lastResult = result
   syncRunning = false
+
+  // After sync complete, trigger AI summarization
+  if (result.imported > 0) {
+    await generateSummaries(userId).catch((err) =>
+      console.error('[feishu-sync] summarize error:', err.message)
+    )
+  }
 
   // Determine final status
   let finalStatus = 'completed'

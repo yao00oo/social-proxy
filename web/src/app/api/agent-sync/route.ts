@@ -1,6 +1,7 @@
 // POST /api/agent-sync — 接收 botook-agent 上传的数据（iMessage、微信等）
 import { NextRequest, NextResponse } from 'next/server'
 import { query, queryOne, exec } from '@/lib/db'
+import { generateSummaries } from '@/lib/summarize'
 
 export const maxDuration = 60
 
@@ -128,6 +129,11 @@ export async function POST(req: NextRequest) {
         imported++
       } catch {}
     }
+  }
+
+  // After import, trigger AI summarization
+  if (imported > 0) {
+    await generateSummaries(userId).catch(() => {})
   }
 
   return NextResponse.json({ ok: true, imported })
