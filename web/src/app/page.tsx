@@ -454,10 +454,13 @@ export default function HomePage() {
             {syncStatus.feishu.running && (
               <>
                 <div className="w-3 h-3 rounded-full bg-teal-500 animate-pulse" />
-                <span className="text-on-surface-variant">飞书同步中...</span>
-                {syncStatus.feishu.lastResult && (
-                  <span className="text-outline">已导入 {syncStatus.feishu.lastResult.imported} 条</span>
-                )}
+                <span className="text-on-surface-variant">
+                  飞书同步中{syncStatus.feishu.totalChats > 0 ? ` ${Math.round((syncStatus.feishu.syncedChats / syncStatus.feishu.totalChats) * 100)}%` : '...'}
+                </span>
+                <span className="text-outline">
+                  {syncStatus.feishu.syncedChats}/{syncStatus.feishu.totalChats} 个会话
+                  {syncStatus.feishu.lastResult?.imported ? ` · 已导入 ${syncStatus.feishu.lastResult.imported} 条` : ''}
+                </span>
               </>
             )}
             {!syncStatus.feishu.running && syncStatus.totals.messages > 0 && (

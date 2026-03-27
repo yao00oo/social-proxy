@@ -132,13 +132,23 @@ function toLocalTime(ms: number): string {
 }
 
 // ── Message content parsing ──
-function parseContent(msgType: string, rawContent: string | undefined): string {
+function parseContent(msgType: string, rawContent: string | undefined, mentions?: any[]): string {
   if (!rawContent) return '[空消息]'
   try {
     const body = JSON.parse(rawContent)
+    // 替换 @_user_N 占位符为真实姓名
+    function replaceMentions(text: string): string {
+      if (!mentions?.length || !text) return text
+      for (const m of mentions) {
+        if (m.key && m.name) {
+          text = text.replaceAll(m.key, `@${m.name}`)
+        }
+      }
+      return text
+    }
     switch (msgType) {
       case 'text':
-        return body.text || '[空文本]'
+        return replaceMentions(body.text || '[空文本]')
       case 'post': {
         const lines: string[] = []
         const content = body.content || body.zh_cn?.content || []
@@ -154,7 +164,7 @@ function parseContent(msgType: string, rawContent: string | undefined): string {
             .join('')
           if (text) lines.push(text)
         }
-        return lines.join('\n') || '[富文本]'
+        return replaceMentions(lines.join('\n') || '[富文本]')
       }
       case 'image':
         return '[图片]'
@@ -245,7 +255,7 @@ async function listMessages(
         chat_id: chatId,
         create_time: item.create_time,
         msg_type: item.msg_type,
-        content: parseContent(item.msg_type, item.body?.content),
+        content: parseContent(item.msg_type, item.body?.content, item.mentions),
         parent_id: item.parent_id || undefined,
       })
     }
@@ -332,12 +342,15 @@ async function fullSync(userId: string) {
         ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
         : undefined
 
-      log(`  同步: ${chat.name} (从 ${lastTs === '0' ? '最早' : new Date(parseInt(lastTs)).toLocaleString()})`)
+      const pct = Math.round((chatIndex / chats.length) * 100)
+      await log(`  [${pct}%] 同步 ${chatIndex}/${chats.length}: ${chat.name}`)
 
       try {
+        // Rate limit: wait 500ms between chats to avoid feishu API throttling (99991400)
+        if (chatIndex > 1) await new Promise(r => setTimeout(r, 500))
         const msgs = await listMessages(userToken, chat.chat_id, msgStartTime)
         if (msgs.length === 0) {
-          log(`    -> 无新消息`)
+          await log(`    -> 无新消息`)
           continue
         }
 
