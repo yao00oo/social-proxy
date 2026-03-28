@@ -710,8 +710,13 @@ export default function SettingsPage() {
         if (realImported > totalImported) totalImported = realImported
         const syncedChats = statusRes?.feishu?.syncedChats || 0
         const totalChats = statusRes?.feishu?.totalChats || 0
+        const lastResult = statusRes?.feishu?.lastResult || {}
+        const hasRemaining = lastResult.remaining > 0
+        const hadImports = (lastResult.imported || 0) > 0
+        // 还有未同步的群 OR 上一轮有导入（说明大群还没拉完）OR 上一轮有剩余
+        const needsContinue = syncedChats < totalChats || hasRemaining || hadImports
 
-        if (syncedChats < totalChats && round < MAX_ROUNDS) {
+        if (needsContinue && round < MAX_ROUNDS) {
           setFeishuLog(prev => [...prev, `第 ${round} 轮完成（${syncedChats}/${totalChats} 个会话），已导入 ${totalImported} 条，自动续传...`])
           await new Promise(r => setTimeout(r, 2000))
           continue
