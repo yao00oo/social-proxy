@@ -462,6 +462,10 @@ export default function SettingsPage() {
   const [feishuCredSaving, setFeishuCredSaving] = useState(false)
   const [feishuCredSaved, setFeishuCredSaved] = useState(false)
 
+  // Install to AI tools
+  const [installTab, setInstallTab] = useState<'tutorial' | 'ai'>('tutorial')
+  const [installCopied, setInstallCopied] = useState<string | null>(null)
+
   // AI Model
   const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; description: string }>>([])
   const [selectedModel, setSelectedModel] = useState('')
@@ -1414,7 +1418,84 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* Section 5: 数据总览 */}
+        {/* Section 5: 把小林装到你的 AI 工具 */}
+        <div className="mb-8">
+          <SectionHeader
+            icon="download"
+            title="把小林装到你的 AI 工具"
+            badge="Claude Code / OpenClaw / Cursor"
+          />
+          <div className="bg-white rounded-2xl p-5 ambient-shadow ghost-border">
+            {/* Tab 切换 */}
+            <div className="flex gap-1 mb-4 bg-surface-container-highest/30 rounded-xl p-1 w-fit">
+              <button
+                onClick={() => setInstallTab('tutorial')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${installTab === 'tutorial' ? 'bg-white shadow-sm text-on-surface' : 'text-outline hover:text-on-surface'}`}
+              >📖 教程</button>
+              <button
+                onClick={() => setInstallTab('ai')}
+                className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${installTab === 'ai' ? 'bg-white shadow-sm text-on-surface' : 'text-outline hover:text-on-surface'}`}
+              >🤖 给 AI</button>
+            </div>
+
+            {installTab === 'tutorial' ? (
+              <div className="space-y-4">
+                <p className="text-sm text-outline">一行命令，把小林装到你的 Claude Code、OpenClaw 或 Cursor 里。</p>
+                <div className="bg-gray-900 rounded-xl p-4 font-mono text-sm text-green-400 flex items-center justify-between">
+                  <span>curl -fsSL https://botook.ai/install.sh | bash</span>
+                  <button onClick={() => { navigator.clipboard.writeText('curl -fsSL https://botook.ai/install.sh | bash'); setInstallCopied('cmd') }} className="text-gray-500 hover:text-white ml-3 cursor-pointer">
+                    <span className="material-symbols-outlined text-lg">{installCopied === 'cmd' ? 'check' : 'content_copy'}</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-4 text-center">
+                  <div className="space-y-2">
+                    <div className="w-10 h-10 rounded-full bg-orange-50 flex items-center justify-center mx-auto">
+                      <span className="text-lg">1</span>
+                    </div>
+                    <p className="text-xs text-on-surface font-medium">运行安装命令</p>
+                    <p className="text-xs text-outline">自动检测你的 AI 工具</p>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center mx-auto">
+                      <span className="text-lg">2</span>
+                    </div>
+                    <p className="text-xs text-on-surface font-medium">浏览器点击授权</p>
+                    <p className="text-xs text-outline">用你的 Google 账号</p>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center mx-auto">
+                      <span className="text-lg">3</span>
+                    </div>
+                    <p className="text-xs text-on-surface font-medium">完成！</p>
+                    <p className="text-xs text-outline">说"看看消息"试试</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 pt-2 border-t border-outline-variant/10">
+                  <span className="text-xs text-outline">支持平台：</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-surface-container-highest/50 text-on-surface-variant">Claude Code</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-surface-container-highest/50 text-on-surface-variant">OpenClaw</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-surface-container-highest/50 text-on-surface-variant">Cursor</span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <p className="text-sm text-outline">把下面这段话直接发给你的 AI 工具，它会自动帮你完成安装：</p>
+                <div className="bg-surface-container-highest/30 rounded-xl p-4 text-sm text-on-surface leading-relaxed relative">
+                  <p>帮我安装 botook，按照 https://botook.ai/install 的说明操作。</p>
+                  <button onClick={() => { navigator.clipboard.writeText('帮我安装 botook，按照 https://botook.ai/install 的说明操作。'); setInstallCopied('ai') }}
+                    className="absolute top-3 right-3 text-outline hover:text-on-surface cursor-pointer">
+                    <span className="material-symbols-outlined text-lg">{installCopied === 'ai' ? 'check' : 'content_copy'}</span>
+                  </button>
+                </div>
+                <div className="bg-primary-fixed/10 rounded-xl p-3">
+                  <p className="text-xs text-primary"><span className="font-bold">💡 提示：</span>AI 会访问 botook.ai/install 读取安装指令，然后自动运行安装命令、引导你授权、配置好一切。你只需要在浏览器里点一下确认。</p>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Section 6: 数据总览 */}
         <div className="bg-white rounded-[12px] p-5 shadow-sm outline outline-1 outline-outline-variant/15 mb-8">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
