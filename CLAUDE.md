@@ -393,7 +393,13 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 | `sender.sender_type` | string | 发送者类型：`user` / `app` / `anonymous` / `unknown` |
 | `sender.tenant_key` | string | 租户标识 |
 
-**获取发送者姓名的正确方式**：用 `sender.id`（open_id）查 `contact_identities.platform_uid`，不要用 `sender.name`（不存在）。同步前用 `buildSenderNameCache()` 构建缓存。
+**获取发送者姓名的正确方式**：
+1. 先看 `sender.sender_type`：
+   - `app`（或 id 以 `cli_` 开头）→ 显示"机器人"，**不要创建 contact**
+   - 空 / `unknown` / `anonymous` → 显示"系统消息"，**不要创建 contact**
+   - `user`（id 以 `ou_` 开头）→ 用 `sender.id` 查 `contact_identities.platform_uid` 获取真名
+2. **绝对不要**用 `sender.name`（不存在）或把 `cli_xxx` / `ou_xxx` 当名字显示
+3. 同步前用 `buildSenderNameCache()` 构建 open_id → 真名缓存
 
 **消息对象完整字段：**
 
