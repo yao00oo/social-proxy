@@ -242,13 +242,16 @@ async function listMessages(
   chatId: string,
   startTime?: string,
   maxMessages: number = 200, // 每次最多 200 条（4 页），控制单群耗时
+  endTime?: string,
 ): Promise<{ messages: FeishuMessage[]; apiCalls: number }> {
   const messages: FeishuMessage[] = []
   let pageToken = ''
   let pages = 0
   const MAX_PAGES = Math.ceil(maxMessages / 50)
 
-  // 有 startTime = 增量同步（从旧到新追赶）；无 startTime = 首次同步（先拉最新）
+  // 有 startTime = 增量同步（从旧到新追赶）
+  // 有 endTime = 历史回填（拉 endTime 之前的消息，从新到旧）
+  // 都没有 = 首次同步（先拉最新）
   const sortType = startTime ? 'ByCreateTimeAsc' : 'ByCreateTimeDesc'
 
   while (pages++ < MAX_PAGES) {
@@ -259,6 +262,7 @@ async function listMessages(
       page_size: '50',
     }
     if (startTime) params.start_time = startTime
+    if (endTime) params.end_time = endTime
     if (pageToken) params.page_token = pageToken
 
     const res = await feishuGetWithRetry('/im/v1/messages', userToken, params)
@@ -537,8 +541,8 @@ async function fullSync(userId: string) {
     const senderNameCache = await buildSenderNameCache(userId, channelId)
 
     // 2. Load existing threads from DB
-    const existingThreads = await query<{ id: number; platform_thread_id: string; last_sync_ts: string }>(
-      'SELECT id, platform_thread_id, last_sync_ts FROM threads WHERE user_id = ? AND channel_id = ?',
+    const existingThreads = await query<{ id: number; platform_thread_id: string; last_sync_ts: string; metadata: any }>(
+      'SELECT id, platform_thread_id, last_sync_ts, metadata FROM threads WHERE user_id = ? AND channel_id = ?',
       [userId, channelId],
     )
 
@@ -563,16 +567,16 @@ async function fullSync(userId: string) {
 
     result.chats = chats.length
     log(`共 ${chats.length} 个会话`)
-    const threadMap = new Map<string, { id: number; last_sync_ts: string }>()
+    const threadMap = new Map<string, { id: number; last_sync_ts: string; metadata: any }>()
     for (const t of existingThreads) {
-      threadMap.set(t.platform_thread_id, { id: t.id, last_sync_ts: t.last_sync_ts })
+      threadMap.set(t.platform_thread_id, { id: t.id, last_sync_ts: t.last_sync_ts, metadata: t.metadata || {} })
     }
     // Only create threads for NEW chats (not in DB yet)
     for (const chat of chats) {
       if (!threadMap.has(chat.chat_id)) {
         const chatType = chat.chat_type === 'p2p' ? 'dm' : 'group'
         const thread = await getOrCreateThread(userId, channelId, chat.chat_id, chat.name, chatType)
-        threadMap.set(chat.chat_id, thread)
+        threadMap.set(chat.chat_id, { ...thread, metadata: {} })
       }
     }
 
@@ -610,9 +614,9 @@ async function fullSync(userId: string) {
 
       const thread = threadMap.get(chat.chat_id)!
       const lastTs = thread.last_sync_ts || '0'
-      const msgStartTime = lastTs !== '0'
-        ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
-        : undefined
+      const meta = thread.metadata || {}
+      const historyDone = meta.history_done === true
+      const historyCursor = meta.history_cursor || undefined // 最老消息的时间戳（秒），用于回填
 
       const pct = Math.round((chatIndex / sortedChats.length) * 100)
       await log(`  [${pct}%] 同步 ${chatIndex}/${sortedChats.length}: ${chat.name}`)
@@ -622,27 +626,80 @@ async function fullSync(userId: string) {
         const waitMs = consecutiveRateLimits > 0 ? 5000 : 1500
         if (chatIndex > 1) await new Promise(r => setTimeout(r, waitMs))
 
+        // ── 阶段 1：拉新消息（增量 or 首次） ──
+        const msgStartTime = lastTs !== '0'
+          ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
+          : undefined
+
         const { messages: msgs, apiCalls } = await listMessages(userToken, chat.chat_id, msgStartTime)
         apiCallCount += apiCalls
         consecutiveRateLimits = 0
 
-        if (msgs.length === 0) {
-          // 没有新消息，标记为已同步（避免下次重复拉）
-          if (lastTs === '0') await updateThreadSyncTs(thread.id, String(Date.now()))
+        if (msgs.length === 0 && lastTs === '0') {
+          await updateThreadSyncTs(thread.id, String(Date.now()))
+          // 标记历史已完成（空群）
+          await exec('UPDATE threads SET metadata = COALESCE(metadata, \'{}\'::jsonb) || ?::jsonb WHERE id = ?',
+            [JSON.stringify({ history_done: true }), thread.id])
           continue
         }
 
-        // 200 条 = 达到 maxMessages 上限，说明这个群还有更多历史消息
-        if (msgs.length >= 200) result.hasMoreHistory = true
+        if (msgs.length > 0) {
+          const { imported: chatImported, newTs } = await processChatMessages(
+            userId, channelId, thread.id, msgs, lastTs, myUserId, senderNameCache, myName,
+          )
+          await updateThreadSyncTs(thread.id, newTs)
+          result.imported += chatImported
 
-        const { imported: chatImported, newTs } = await processChatMessages(
-          userId, channelId, thread.id, msgs, lastTs, myUserId, senderNameCache, myName,
-        )
-        await updateThreadSyncTs(thread.id, newTs)
+          // 首次同步：记录最老消息时间作为 history_cursor
+          if (lastTs === '0' && msgs.length > 0) {
+            const oldestTs = msgs.reduce((min, m) => m.create_time < min ? m.create_time : min, msgs[0].create_time)
+            const oldestSec = String(Math.floor(parseInt(oldestTs) / 1000))
+            await exec('UPDATE threads SET metadata = COALESCE(metadata, \'{}\'::jsonb) || ?::jsonb WHERE id = ?',
+              [JSON.stringify({ history_cursor: oldestSec, history_done: false }), thread.id])
+          }
 
-        result.imported += chatImported
+          log(`    -> 导入 ${chatImported} 条新消息${msgs.length >= 200 ? '（还有更多新消息）' : ''}`)
+        }
+
+        // ── 阶段 2：回填历史消息（如果还有时间和 API 额度） ──
+        if (!historyDone && historyCursor && Date.now() - startTime < TIMEOUT_MS - 10000 && apiCallCount < MAX_API_CALLS_PER_REQUEST - 2) {
+          // 拉 historyCursor 之前的消息（ByCreateTimeDesc，endTime = historyCursor）
+          const { messages: histMsgs, apiCalls: histCalls } = await listMessages(userToken, chat.chat_id, undefined, 200, historyCursor)
+          apiCallCount += histCalls
+
+          if (histMsgs.length > 0) {
+            const { imported: histImported } = await processChatMessages(
+              userId, channelId, thread.id, histMsgs, '0', myUserId, senderNameCache, myName,
+            )
+            result.imported += histImported
+
+            // 更新 history_cursor 为更老的时间
+            const newOldest = histMsgs.reduce((min, m) => m.create_time < min ? m.create_time : min, histMsgs[0].create_time)
+            const newOldestSec = String(Math.floor(parseInt(newOldest) / 1000))
+            await exec('UPDATE threads SET metadata = COALESCE(metadata, \'{}\'::jsonb) || ?::jsonb WHERE id = ?',
+              [JSON.stringify({ history_cursor: newOldestSec }), thread.id])
+
+            log(`    -> 回填 ${histImported} 条历史消息${histMsgs.length >= 200 ? '（还有更多）' : ''}`)
+
+            if (histMsgs.length < 200) {
+              // 不足 200 条，说明已到底
+              await exec('UPDATE threads SET metadata = COALESCE(metadata, \'{}\'::jsonb) || ?::jsonb WHERE id = ?',
+                [JSON.stringify({ history_done: true }), thread.id])
+              log(`    -> 历史消息回填完成`)
+            } else {
+              result.hasMoreHistory = true
+            }
+          } else {
+            // 没有更老的消息了
+            await exec('UPDATE threads SET metadata = COALESCE(metadata, \'{}\'::jsonb) || ?::jsonb WHERE id = ?',
+              [JSON.stringify({ history_done: true }), thread.id])
+            log(`    -> 历史消息回填完成`)
+          }
+        } else if (!historyDone && historyCursor) {
+          result.hasMoreHistory = true
+        }
+
         lastResult = { ...result }
-        log(`    -> 导入 ${chatImported} 条${msgs.length >= 200 ? '（还有更多）' : ''}`)
       } catch (err: any) {
         if (err instanceof RateLimitError) {
           consecutiveRateLimits++
