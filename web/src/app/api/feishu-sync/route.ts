@@ -23,6 +23,7 @@ import https from 'https'
 
 // ── Module-level state ──
 let syncRunning = false
+let syncStartedAt = 0
 let syncLog: string[] = []
 let lastResult: any = null
 let autoSyncTimer: ReturnType<typeof setInterval> | null = null
@@ -664,7 +665,7 @@ export async function POST(req: Request) {
     if (syncRunning) {
       return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
     }
-    syncRunning = true
+    syncRunning = true; syncStartedAt = Date.now()
     syncLog = ['重置数据，准备重新全量同步...']
     try {
       // Delete messages, contacts, threads for this user
@@ -682,12 +683,13 @@ export async function POST(req: Request) {
     }
   }
 
-  // Mode 3: Trigger full sync (runs synchronously within the request)
-  if (syncRunning) {
+  // Mode 4: Trigger full sync (runs synchronously within the request)
+  // syncRunning 可能因 Vercel 超时卡住（进程被杀但变量未重置），60 秒后自动解锁
+  if (syncRunning && (Date.now() - syncStartedAt < 65000)) {
     return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
   }
 
-  syncRunning = true
+  syncRunning = true; syncStartedAt = Date.now()
   syncLog = ['开始全量同步...']
 
   try {

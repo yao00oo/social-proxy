@@ -696,42 +696,36 @@ export default function SettingsPage() {
         const res = await fetch('/api/feishu-sync', { method: 'POST' }).then(r => r.json())
         const result = res.result || {}
         totalImported += result.imported || 0
+      } catch {
+        // Vercel 超时，正常情况
+      }
 
-        // 刷新同步状态
-        fetch('/api/sync-status').then(r => r.json()).then(data => setSyncStatus(data)).catch(() => {})
+      // 不管成功还是超时，都从 sync-status 读真实进度决定是否续传
+      try {
+        const statusRes = await fetch('/api/sync-status').then(r => r.json())
+        setSyncStatus(statusRes)
         fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
 
-        if (result.remaining > 0) {
-          setFeishuLog(prev => [...prev, `第 ${round} 轮完成，已导入 ${totalImported} 条，继续剩余 ${result.remaining} 个会话...`])
-          // 短暂等一下再续传，给飞书 API 喘息
+        const realImported = statusRes?.feishu?.lastResult?.imported || 0
+        if (realImported > totalImported) totalImported = realImported
+        const syncedChats = statusRes?.feishu?.syncedChats || 0
+        const totalChats = statusRes?.feishu?.totalChats || 0
+
+        if (syncedChats < totalChats && round < MAX_ROUNDS) {
+          setFeishuLog(prev => [...prev, `第 ${round} 轮完成（${syncedChats}/${totalChats} 个会话），已导入 ${totalImported} 条，自动续传...`])
           await new Promise(r => setTimeout(r, 2000))
           continue
         }
 
         // 全部完成
-        setFeishuResult({ ...result, imported: totalImported })
+        setFeishuResult({ imported: totalImported })
         setFeishuLog(prev => [...prev, `✅ 同步完成，共 ${round} 轮，导入 ${totalImported} 条消息`])
         break
-      } catch (err: any) {
-        // 超时或网络错误，从 sync-status 读取真实进度
-        const status = await fetch('/api/sync-status').then(r => r.json()).catch(() => null)
-        const realImported = status?.feishu?.lastResult?.imported || 0
-        if (realImported > totalImported) totalImported = realImported
-        const syncedChats = status?.feishu?.syncedChats || 0
-        const totalChats = status?.feishu?.totalChats || 0
-        const hasRemaining = syncedChats < totalChats
-
-        if (hasRemaining && round < MAX_ROUNDS) {
-          setFeishuLog(prev => [...prev, `第 ${round} 轮完成（${syncedChats}/${totalChats} 个会话），已导入 ${totalImported} 条，自动续传...`])
-          await new Promise(r => setTimeout(r, 3000))
-          continue
-        }
-
-        setFeishuLog(prev => [...prev, totalImported > 0
-          ? `✅ 同步完成，共 ${round} 轮，导入 ${totalImported} 条消息`
-          : `同步停止: ${err.message || '网络超时'}`
-        ])
-        break
+      } catch {
+        // sync-status 也失败了，等一下重试
+        setFeishuLog(prev => [...prev, `第 ${round} 轮网络异常，3 秒后重试...`])
+        await new Promise(r => setTimeout(r, 3000))
+        continue
       }
     }
 
