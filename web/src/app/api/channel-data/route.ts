@@ -55,12 +55,17 @@ export async function DELETE(req: NextRequest) {
   )
   if (!channel) return NextResponse.json({ error: 'channel not found' }, { status: 404 })
 
-  // Delete in order: messages → threads → documents → channel data (keep channel record)
+  // Delete in order: messages → summaries → threads → documents → contact_identities
   await exec(`DELETE FROM messages WHERE channel_id = ? AND user_id = ?`, [channel.id, userId])
   await exec(`DELETE FROM summaries WHERE thread_id IN (SELECT id FROM threads WHERE channel_id = ? AND user_id = ?)`, [channel.id, userId])
   await exec(`DELETE FROM threads WHERE channel_id = ? AND user_id = ?`, [channel.id, userId])
   await exec(`DELETE FROM documents WHERE channel_id = ? AND user_id = ?`, [channel.id, userId])
   await exec(`DELETE FROM contact_identities WHERE channel_id = ?`, [channel.id])
+
+  // 终端 channel 和 thread 是 1:1 的，删数据时连 channel 一起删，避免孤儿 channel
+  if (platform === 'terminal') {
+    await exec(`DELETE FROM channels WHERE id = ? AND user_id = ?`, [channel.id, userId])
+  }
 
   return NextResponse.json({ ok: true, message: `已删除 ${platform} 的所有数据` })
 }

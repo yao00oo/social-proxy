@@ -85,9 +85,20 @@ export async function DELETE(req: NextRequest) {
   const threadId = req.nextUrl.searchParams.get('thread_id')
   if (!threadId) return NextResponse.json({ error: 'missing thread_id' }, { status: 400 })
 
+  // 查 thread 关联的 channel，判断是否需要级联删除
+  const thread = await queryOne<{ channel_id: number; platform: string }>(
+    `SELECT t.channel_id, ch.platform FROM threads t JOIN channels ch ON ch.id = t.channel_id
+     WHERE t.id = ? AND t.user_id = ?`, [threadId, userId]
+  )
+
   await query(`DELETE FROM messages WHERE thread_id = ? AND user_id = ?`, [threadId, userId])
   await query(`DELETE FROM summaries WHERE thread_id = ? AND user_id = ?`, [threadId, userId])
   await query(`DELETE FROM threads WHERE id = ? AND user_id = ?`, [threadId, userId])
+
+  // 终端 channel 和 thread 是 1:1 的，删 thread 必须连 channel 一起删
+  if (thread?.platform === 'terminal') {
+    await query(`DELETE FROM channels WHERE id = ? AND user_id = ?`, [thread.channel_id, userId])
+  }
 
   return NextResponse.json({ ok: true })
 }
