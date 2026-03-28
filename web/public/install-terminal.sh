@@ -75,11 +75,8 @@ fi
 export PATH="$BIN_DIR:$PATH"
 
 echo ""
-echo "  ✓ 安装完成！"
+echo "  ✓ 安装完成！启动中..."
 echo ""
-echo "  现在运行以下命令连接终端："
-echo ""
-echo "    socialproxy-terminal"
-echo ""
-echo "  (如果提示找不到命令，先运行: source $SHELL_RC)"
-echo ""
+
+# 用新的 tty 启动，避免 curl pipe 导致 stdin 关闭
+exec /bin/sh -c "exec < /dev/tty; $BIN_DIR/socialproxy-terminal"
