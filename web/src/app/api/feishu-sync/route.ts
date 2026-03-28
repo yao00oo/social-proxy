@@ -284,6 +284,35 @@ async function listMessages(
   return { messages, apiCalls: pages }
 }
 
+// ── 通过飞书通讯录 API 查用户真名 ──
+let _appAccessToken: string | null = null
+let _appTokenTime = 0
+
+async function getAppToken(userId: string): Promise<string | null> {
+  // 缓存 2 小时
+  if (_appAccessToken && Date.now() - _appTokenTime < 7000 * 1000) return _appAccessToken
+  try {
+    const appId = process.env.FEISHU_APP_ID || await getSetting('feishu_app_id', userId)
+    const appSecret = process.env.FEISHU_APP_SECRET || await getSetting('feishu_app_secret', userId)
+    if (!appId || !appSecret) return null
+    const appRes = await feishuPost('/auth/v3/app_access_token/internal', { app_id: appId, app_secret: appSecret })
+    if (appRes.code !== 0) return null
+    _appAccessToken = appRes.app_access_token
+    _appTokenTime = Date.now()
+    return _appAccessToken
+  } catch { return null }
+}
+
+async function fetchUserName(openId: string, userId: string): Promise<string | null> {
+  try {
+    const appToken = await getAppToken(userId)
+    if (!appToken) return null
+    const res = await feishuGet(`/contact/v3/users/${openId}`, appToken, { user_id_type: 'open_id' })
+    if (res.code !== 0) return null
+    return res.data?.user?.name || res.data?.user?.en_name || null
+  } catch { return null }
+}
+
 // ── Discover p2p chats via search API ──
 // 两种策略：1) 关键词搜索覆盖大部分 2) from_ids 按同事搜覆盖纯图片/表情对话
 async function discoverP2pChats(
@@ -389,7 +418,17 @@ async function processChatMessages(
     }
   }
 
-  // 2. 批量创建联系人和身份（每个 sender 只查一次 DB）
+  // 2. 对 cache 没命中的 sender，通过飞书通讯录 API 查真名
+  for (const senderId of userSenders) {
+    if (!senderNameCache.has(senderId) && senderId.startsWith('ou_')) {
+      const realName = await fetchUserName(senderId, userId)
+      if (realName) {
+        senderNameCache.set(senderId, realName)
+      }
+    }
+  }
+
+  // 3. 批量创建联系人和身份（每个 sender 只查一次 DB）
   const identityCache = new Map<string, number>()
   for (const senderId of userSenders) {
     const contactName = senderNameCache.get(senderId) || senderId
@@ -454,6 +493,17 @@ async function processChatMessages(
   for (const senderId of userSenders) {
     const contactName = senderNameCache.get(senderId) || senderId
     await updateContactStats(userId, contactName, lastMsgTs)
+  }
+
+  // 6. 修正该 thread 中之前写入的 ou_ sender_name（cache 命中的才修）
+  for (const senderId of userSenders) {
+    const realName = senderNameCache.get(senderId)
+    if (realName && realName !== senderId) {
+      await exec(
+        'UPDATE messages SET sender_name = ? WHERE thread_id = ? AND sender_name = ?',
+        [realName, threadId, senderId],
+      )
+    }
   }
 
   return { imported: values.length, newTs }
