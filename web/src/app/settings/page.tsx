@@ -541,6 +541,18 @@ export default function SettingsPage() {
   // Doc sync
   const docSync = useDocSync()
 
+  // Data browser
+  const [dbPlatform, setDbPlatform] = useState('all')
+  const [dbThreads, setDbThreads] = useState<any[]>([])
+  const [dbTotal, setDbTotal] = useState(0)
+  const [dbOffset, setDbOffset] = useState(0)
+  const [dbExpandedThread, setDbExpandedThread] = useState<number | null>(null)
+  const [dbMessages, setDbMessages] = useState<any[]>([])
+  const [dbMsgTotal, setDbMsgTotal] = useState(0)
+  const [dbMsgOffset, setDbMsgOffset] = useState(0)
+  const [dbSearch, setDbSearch] = useState('')
+  const [dbLoading, setDbLoading] = useState(false)
+
   // ---------- Fetchers ----------
 
   const fetchSettings = useCallback(async () => {
@@ -570,6 +582,32 @@ export default function SettingsPage() {
     }
     setChannelData(map)
   }, [])
+
+  const loadThreads = async (platform: string, offset: number = 0, append: boolean = false) => {
+    setDbLoading(true)
+    const params = new URLSearchParams({ type: 'threads', platform, offset: String(offset), limit: '20' })
+    const data = await fetch(`/api/data-browser?${params}`).then(r => r.json()).catch(() => ({ threads: [], total: 0 }))
+    setDbThreads(prev => append ? [...prev, ...data.threads] : data.threads)
+    setDbTotal(data.total)
+    setDbOffset(offset)
+    setDbLoading(false)
+  }
+
+  const loadMessages = async (threadId: number, offset: number = 0) => {
+    const params = new URLSearchParams({ type: 'messages', thread_id: String(threadId), offset: String(offset), limit: '20' })
+    const data = await fetch(`/api/data-browser?${params}`).then(r => r.json()).catch(() => ({ messages: [], total: 0 }))
+    setDbMessages(offset > 0 ? [...data.messages, ...dbMessages] : data.messages)
+    setDbMsgTotal(data.total)
+    setDbMsgOffset(offset)
+  }
+
+  const deleteThread = async (threadId: number) => {
+    if (!confirm('确定删除这个会话的所有消息吗？')) return
+    await fetch(`/api/data-browser?thread_id=${threadId}`, { method: 'DELETE' })
+    setDbThreads(prev => prev.filter(t => t.id !== threadId))
+    setDbTotal(prev => prev - 1)
+    if (dbExpandedThread === threadId) setDbExpandedThread(null)
+  }
 
   const saveSettings = async () => {
     setSettingsSaving(true)
@@ -605,6 +643,7 @@ export default function SettingsPage() {
     checkFeishuAuth()
     checkGmailAuth()
     fetchChannelData()
+    loadThreads('all')
     // Load available models
     fetch('/api/models').then(r => r.json()).then(data => setAvailableModels(data.models || [])).catch(() => {})
     // Load current model selection
@@ -1437,6 +1476,102 @@ export default function SettingsPage() {
                 </p>
               )}
             </div>
+          )}
+        </div>
+
+        {/* Section 5: 数据总览 */}
+        <div className="bg-white rounded-[12px] p-5 shadow-sm outline outline-1 outline-outline-variant/15 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <span className="material-symbols-outlined text-primary-container" style={{ fontVariationSettings: "'FILL' 1" }}>database</span>
+              <h3 className="font-bold text-on-surface">数据总览</h3>
+              <span className="text-xs text-outline">{dbTotal} 个会话</span>
+            </div>
+          </div>
+
+          {/* Platform tabs + Search */}
+          <div className="flex items-center gap-2 mb-4">
+            {['all', 'feishu', 'imessage', 'gmail', 'terminal'].map(p => (
+              <button key={p} onClick={() => { setDbPlatform(p); loadThreads(p) }}
+                className={`px-3 py-1 text-xs rounded-full transition-colors ${
+                  dbPlatform === p ? 'bg-primary text-on-primary' : 'bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest'
+                }`}>
+                {p === 'all' ? '全部' : p === 'feishu' ? '飞书' : p === 'imessage' ? 'iMessage' : p === 'gmail' ? 'Gmail' : p}
+              </button>
+            ))}
+            <div className="flex-1" />
+            <input placeholder="搜索消息..." value={dbSearch}
+              onChange={e => setDbSearch(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && dbSearch) { /* search */ } }}
+              className="px-3 py-1 text-xs rounded-full bg-surface-container border-none outline-none w-40 placeholder:text-outline/50" />
+          </div>
+
+          {/* Thread list */}
+          <div className="space-y-1 max-h-[400px] overflow-y-auto">
+            {dbThreads.map(t => (
+              <div key={t.id}>
+                {/* Thread row */}
+                <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-surface-container-low cursor-pointer transition-colors"
+                  onClick={() => {
+                    if (dbExpandedThread === t.id) { setDbExpandedThread(null) }
+                    else { setDbExpandedThread(t.id); loadMessages(t.id) }
+                  }}>
+                  <span className="material-symbols-outlined text-sm text-outline">
+                    {dbExpandedThread === t.id ? 'expand_more' : 'chevron_right'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-on-surface truncate">{t.name || '未命名'}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high text-outline">{t.platform}</span>
+                      <span className="text-[10px] text-outline">{t.message_count}条</span>
+                    </div>
+                    {t.last_message && (
+                      <p className="text-xs text-outline truncate mt-0.5">
+                        {t.last_sender ? `${t.last_sender}: ` : ''}{t.last_message}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-outline whitespace-nowrap">{t.last_time?.slice(0, 10) || ''}</span>
+                  <button onClick={(e) => { e.stopPropagation(); deleteThread(t.id) }}
+                    className="text-outline hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100">
+                    <span className="material-symbols-outlined text-sm">delete</span>
+                  </button>
+                </div>
+
+                {/* Expanded messages */}
+                {dbExpandedThread === t.id && (
+                  <div className="ml-8 mr-2 mb-2 bg-surface rounded-lg p-3 space-y-1.5 max-h-[300px] overflow-y-auto">
+                    {dbMsgTotal > dbMessages.length && (
+                      <button onClick={() => loadMessages(t.id, dbMessages.length)}
+                        className="text-xs text-primary hover:underline cursor-pointer mb-2">
+                        加载更早的消息 ({dbMsgTotal - dbMessages.length}条)
+                      </button>
+                    )}
+                    {dbMessages.map(m => (
+                      <div key={m.id} className="flex gap-2 text-xs">
+                        <span className="text-outline w-14 shrink-0 font-mono">{m.timestamp?.slice(11, 16)}</span>
+                        <span className={`shrink-0 w-16 truncate ${m.direction === 'sent' ? 'text-primary' : 'text-on-surface-variant'}`}>
+                          {m.sender_name || (m.direction === 'sent' ? '我' : '对方')}
+                        </span>
+                        <span className="text-on-surface break-all">{m.content}</span>
+                      </div>
+                    ))}
+                    {dbMessages.length === 0 && !dbLoading && <p className="text-xs text-outline">暂无消息</p>}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {dbThreads.length === 0 && !dbLoading && <p className="text-sm text-outline text-center py-4">暂无数据</p>}
+          </div>
+
+          {/* Load more */}
+          {dbThreads.length < dbTotal && (
+            <button onClick={() => loadThreads(dbPlatform, dbOffset + 20, true)}
+              disabled={dbLoading}
+              className="w-full mt-3 py-2 text-xs text-primary hover:bg-surface-container-low rounded-lg transition-colors cursor-pointer">
+              {dbLoading ? '加载中...' : `加载更多 (${dbTotal - dbThreads.length})`}
+            </button>
           )}
         </div>
 
