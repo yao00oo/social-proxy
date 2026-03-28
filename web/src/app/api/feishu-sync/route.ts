@@ -648,7 +648,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true, autoSync: newInterval > 0, autoSyncSeconds: newInterval })
   }
 
-  // Mode 2: Reset and re-sync (delete old data, re-sync from scratch)
+  // Mode 2: Quick incremental sync (only already-synced threads, lightweight)
+  if (body.quick) {
+    if (syncRunning) return NextResponse.json({ ok: true, message: '同步中，跳过' })
+    try {
+      await quickSync(userId)
+      return NextResponse.json({ ok: true })
+    } catch {
+      return NextResponse.json({ ok: false })
+    }
+  }
+
+  // Mode 3: Reset and re-sync (delete old data, re-sync from scratch)
   if (body.reset) {
     if (syncRunning) {
       return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })

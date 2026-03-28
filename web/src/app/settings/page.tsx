@@ -685,35 +685,48 @@ export default function SettingsPage() {
     setFeishuLog(['开始同步...'])
     setFeishuResult(null)
 
-    // Start polling for progress immediately
-    const poll = setInterval(async () => {
+    let totalImported = 0
+    let round = 0
+    const MAX_ROUNDS = 30 // 最多续传 30 轮，防无限循环
+
+    while (round < MAX_ROUNDS) {
+      round++
+
       try {
-        const status = await fetch('/api/feishu-sync').then(r => r.json())
-        if (status.log?.length) setFeishuLog(status.log)
-        if (status.lastResult) setFeishuResult(status.lastResult)
-      } catch {}
-    }, 2000)
+        const res = await fetch('/api/feishu-sync', { method: 'POST' }).then(r => r.json())
+        const result = res.result || {}
+        totalImported += result.imported || 0
 
-    // Send sync request (this blocks until done or timeout)
-    try {
-      const res = await fetch('/api/feishu-sync', { method: 'POST' }).then(r => r.json())
-      const result = res.result || {}
+        // 刷新同步状态
+        fetch('/api/sync-status').then(r => r.json()).then(data => setSyncStatus(data)).catch(() => {})
+        fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
 
-      // If there are remaining chats, auto-continue
-      if (result.remaining > 0) {
-        clearInterval(poll)
-        setFeishuLog(prev => [...prev, `已同步 ${result.imported} 条，继续同步剩余 ${result.remaining} 个会话...`])
-        // Recursive call to continue
-        await handleFeishuSync()
-        return
+        if (result.remaining > 0) {
+          setFeishuLog(prev => [...prev, `第 ${round} 轮完成，已导入 ${totalImported} 条，继续剩余 ${result.remaining} 个会话...`])
+          // 短暂等一下再续传，给飞书 API 喘息
+          await new Promise(r => setTimeout(r, 2000))
+          continue
+        }
+
+        // 全部完成
+        setFeishuResult({ ...result, imported: totalImported })
+        setFeishuLog(prev => [...prev, `✅ 同步完成，共 ${round} 轮，导入 ${totalImported} 条消息`])
+        break
+      } catch (err: any) {
+        // 超时或网络错误，检查是否还有未同步的
+        const status = await fetch('/api/sync-status').then(r => r.json()).catch(() => null)
+        const hasRemaining = status?.feishu?.lastResult?.remaining > 0 ||
+          status?.feishu?.syncedChats < status?.feishu?.totalChats
+
+        if (hasRemaining && round < MAX_ROUNDS) {
+          setFeishuLog(prev => [...prev, `第 ${round} 轮超时，已导入 ${totalImported} 条，自动续传...`])
+          await new Promise(r => setTimeout(r, 3000))
+          continue
+        }
+
+        setFeishuLog(prev => [...prev, `同步停止: ${err.message || '超时'}，已导入 ${totalImported} 条`])
+        break
       }
-
-      clearInterval(poll)
-      setFeishuResult(result)
-      setFeishuLog(prev => [...prev, `✅ 同步完成，共导入 ${result.imported || 0} 条消息`])
-    } catch (err: any) {
-      clearInterval(poll)
-      setFeishuLog(prev => [...prev, `❌ 同步出错: ${err.message}`])
     }
 
     setFeishuSyncing(false)

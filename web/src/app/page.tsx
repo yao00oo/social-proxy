@@ -304,6 +304,20 @@ export default function HomePage() {
     return () => clearInterval(iv)
   }, [status])
 
+  // ---------- Auto incremental sync (every 60s, only for already-synced threads) ----------
+  useEffect(() => {
+    if (status !== 'authenticated') return
+    const quickSync = () => {
+      fetch('/api/feishu-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quick: true }),
+      }).catch(() => {})
+    }
+    const iv = setInterval(quickSync, 60000)
+    return () => clearInterval(iv)
+  }, [status])
+
   // ---------- Load real contact history ----------
   useEffect(() => {
     if (!selectedName || isAiChat) return
