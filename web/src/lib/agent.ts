@@ -337,11 +337,12 @@ function createTools(userId: string): Record<string, any> {
   },
 
   send_message: {
-    description: '给联系人发送消息。默认先返回草稿让用户确认，用户说"发吧/确认/发送"后再真正发送。自动选择发送渠道（飞书/邮件）。',
+    description: '给联系人发送消息。默认先返回草稿让用户确认，用户说"发吧/确认/发送"后再真正发送。自动推荐最佳渠道，但用户可以指定。',
     parameters: z.object({
       contact_name: z.string().describe('联系人姓名'),
       content: z.string().describe('消息内容'),
       confirm: z.boolean().optional().describe('是否确认发送。首次调用不传或传false，用户确认后传true'),
+      channel: z.string().optional().describe('指定发送渠道：feishu/email。不传则自动选择'),
     }),
     execute: async ({ contact_name, content, confirm }: { contact_name: string; content: string; confirm?: boolean }) => {
       // Find contact and available channels
@@ -386,8 +387,8 @@ function createTools(userId: string): Record<string, any> {
         return {
           success: true,
           mode: 'draft',
-          message: `📨 草稿：\n发给：${contact.name}（${channelStr}）\n内容：${content}\n\n请确认是否发送？`,
-          draft: { to: contact.name, content, channels }
+          message: `📨 草稿：\n发给：${contact.name}\n渠道：${channelStr}（推荐${channels[0]}）\n内容：${content}\n\n确认发送吗？你也可以指定渠道，如"用邮件发"`,
+          draft: { to: contact.name, content, channels, recommended: channels[0] }
         }
       }
 
