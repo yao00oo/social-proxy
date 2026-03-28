@@ -839,9 +839,9 @@ export default function SettingsPage() {
               </p>
 
               <div className="bg-surface rounded-xl p-4 font-mono text-sm text-on-surface relative">
-                <code>curl -fsSL https://botook.ai/install.sh | sh</code>
+                <code>curl -fsSL https://botook.ai/install-terminal.sh | sh</code>
                 <div className="absolute top-2 right-2">
-                  <CopyButton text="curl -fsSL https://botook.ai/install.sh | sh" />
+                  <CopyButton text="curl -fsSL https://botook.ai/install-terminal.sh | sh" />
                 </div>
               </div>
 
@@ -1023,9 +1023,9 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-on-surface">在 Mac 终端运行以下命令</p>
                 </div>
                 <div className="bg-surface rounded-lg p-3 font-mono text-sm text-primary relative group">
-                  <code>npx botook-agent</code>
+                  <code>curl -fsSL https://botook.ai/install-imessage.sh | sh</code>
                   <button
-                    onClick={() => { navigator.clipboard.writeText('npx botook-agent') }}
+                    onClick={() => { navigator.clipboard.writeText('curl -fsSL https://botook.ai/install-imessage.sh | sh') }}
                     className="absolute right-2 top-2 text-[10px] px-2 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest transition-colors opacity-0 group-hover:opacity-100"
                   >复制</button>
                 </div>

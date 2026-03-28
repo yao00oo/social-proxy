@@ -1,6 +1,6 @@
 #!/bin/sh
 # Social Proxy Terminal — 一行命令安装
-# curl -fsSL https://botook.ai/install.sh | sh
+# curl -fsSL https://botook.ai/install-terminal.sh | sh
 set -e
 
 INSTALL_DIR="$HOME/.socialproxy"
