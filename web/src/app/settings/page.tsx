@@ -1013,7 +1013,7 @@ export default function SettingsPage() {
               </div>
 
               <p className="text-xs text-on-surface-variant">
-                通过 botook-agent 在你的 Mac 上读取 iMessage 数据库，自动同步所有聊天记录和新消息。
+                通过 botook-agent 在你的 Mac 上读取 iMessage 数据库，自动同步所有聊天记录和新消息。仅支持 macOS。
               </p>
 
               {/* Step 1 */}
@@ -1023,9 +1023,9 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-on-surface">在 Mac 终端运行以下命令</p>
                 </div>
                 <div className="bg-surface rounded-lg p-3 font-mono text-sm text-primary relative group">
-                  <code>curl -fsSL https://botook.ai/install.sh | bash</code>
+                  <code>npx botook-agent</code>
                   <button
-                    onClick={() => { navigator.clipboard.writeText('curl -fsSL https://botook.ai/install.sh | bash') }}
+                    onClick={() => { navigator.clipboard.writeText('npx botook-agent') }}
                     className="absolute right-2 top-2 text-[10px] px-2 py-0.5 rounded bg-surface-container-high hover:bg-surface-container-highest transition-colors opacity-0 group-hover:opacity-100"
                   >复制</button>
                 </div>

@@ -40,7 +40,7 @@ mkdir -p "$BIN_DIR"
 # 下载编译好的 JS
 echo "  下载中..."
 for f in cli.js auth.js config.js http.js logger.js terminal.js; do
-  curl -fsSL "$REPO/dist/$f" -o "$BIN_DIR/$f"
+  curl -fsSL "$REPO/$f" -o "$BIN_DIR/$f"
 done
 
 # 下载 package.json 并安装依赖
