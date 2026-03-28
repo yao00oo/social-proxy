@@ -894,6 +894,18 @@ export default function SettingsPage() {
               onAction={() => setExpandedCard(expandedCard === 'imessage' ? null : 'imessage')}
             />
 
+            {/* Gmail */}
+            <SourceCard
+              icon="mail"
+              iconClass="text-red-500"
+              title="Gmail"
+              subtitle="邮件同步"
+              connected={gmailAuthed}
+              connectedLabel={gmailEmail || '已授权'}
+              actionLabel={gmailAuthed ? '已连接' : '授权'}
+              onAction={() => setExpandedCard(expandedCard === 'gmail-data' ? null : 'gmail-data')}
+            />
+
             {/* 终端/CLI */}
             <SourceCard
               icon="terminal"
