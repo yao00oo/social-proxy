@@ -51,8 +51,21 @@ function executeCommand(cmd: string): string {
 
 // ── 轮询 + 执行循环 ──
 async function pollLoop(config: TerminalConfig) {
+  // 启动时先获取当前最新消息 ID，跳过所有历史消息
   let lastId = 0
-  daemonLog(`daemon started, thread=${config.threadId}`)
+  try {
+    const { status, body } = await httpGet(
+      `/api/terminal/poll?thread_id=${config.threadId}&after=0`,
+      config.token,
+    )
+    if (status === 200) {
+      const msgs = JSON.parse(body).messages || []
+      if (msgs.length > 0) {
+        lastId = Math.max(...msgs.map((m: any) => m.id))
+      }
+    }
+  } catch {}
+  daemonLog(`daemon started, thread=${config.threadId}, lastId=${lastId}`)
 
   while (true) {
     try {
@@ -68,8 +81,11 @@ async function pollLoop(config: TerminalConfig) {
         for (const msg of messages) {
           lastId = Math.max(lastId, msg.id)
 
-          // 只处理"收到的"消息（从 Web 端发给终端的）
-          if (msg.direction !== 'received') continue
+          // 只处理"收到的"消息（从 Web 端发给终端的），跳过自己发的
+          if (msg.direction !== 'received') {
+            lastId = Math.max(lastId, msg.id)
+            continue
+          }
 
           const content = msg.content?.trim()
           if (!content) continue
