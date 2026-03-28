@@ -1,9 +1,96 @@
 # Social Proxy — 项目指南
 
-## 项目概述
-AI 社交关系管理工具。用户通过 Google 登录 → 连接飞书/Gmail → AI 助手"小林"帮你管理消息、联系人、社交关系。
+## 产品定义
+
+**Social Proxy 是一个统一收件箱，把所有你能对话的东西变成联系人。**
+
+联系人是人、机器、还是 AI 不重要。交互方式完全一样：看消息、发消息、让小林帮你处理。
 
 线上地址：https://botook.ai
+
+### 联系人的来源
+
+| 来源 | 接入方式 | 联系人举例 |
+|------|---------|-----------|
+| 飞书 | OAuth 授权 | 张三、打包群 |
+| Gmail | OAuth 授权 | 李四（邮件往来） |
+| 微信 | 导入聊天记录 | 妈妈、同学群 |
+| iMessage | Mac 本地同步 | iPhone 联系人 |
+| 终端 | `curl -fsSL https://botook.ai/install-terminal.sh \| sh` | 我的 MacBook、生产服务器 |
+| Telegram | Bot Token | Telegram 联系人 |
+| Webhook | 粘贴 URL | Sentry 告警、CI 通知 |
+| AI | 填 API Key | ChatGPT、自定义 Bot |
+| 任意 IM | 未来扩展 | WhatsApp、Discord、Slack |
+
+### 每种联系人的对话
+
+**人（飞书/邮件/微信）** — 正常聊天消息
+```
+张三: 明天开会吗
+我: 好的，几点
+```
+
+**终端（MacBook/服务器）** — 命令和输出
+```
+我: df -h
+MacBook: Filesystem  Size  Used  Avail
+         /dev/disk1  500G  380G  120G
+```
+
+**Webhook（CI/告警）** — 事件通知 + 可回复
+```
+GitHub Actions: ❌ Build #128 failed — test timeout
+我: 看看日志
+```
+
+**AI** — 对话
+```
+我: 帮我写个正则匹配邮箱
+ChatGPT: ^[a-zA-Z0-9._%+-]+@...
+```
+
+**全部都是同一个界面：** 左边联系人列表，右边聊天记录，底部输入框。
+
+### 小林（AI 助理）
+
+小林能操作所有联系人，跨平台编排：
+```
+你: 把 MacBook 上的报告发给祝悦
+小林: → 给"我的MacBook"发命令读取文件
+      → MacBook 回传文件内容
+      → 给"祝悦"(飞书) 发送附件
+      → 完成
+```
+
+### 统一模型
+
+不管来源是什么，在 Social Proxy 里都是同一个结构：
+- **Channel** — 怎么连的（飞书OAuth / 终端daemon / Webhook URL）
+- **Thread** — 一个对话（和张三的私聊 / 打包群 / 我的MacBook）
+- **Message** — 一条消息（文本 / 命令输出 / 邮件 / 图片）
+
+### 接入新 IM 的标准
+
+只需实现两个能力：
+- **收消息**：能把消息推到 Social Proxy（Webhook / 轮询 / WebSocket）
+- **发消息**：Social Proxy 能把消息发出去（API / SMTP / stdin）
+
+```sql
+INSERT INTO channels (user_id, platform, name, credentials)
+VALUES ('user1', '新平台', '显示名', '{"token":"xxx"}')
+-- 消息自动写入 threads + messages，Web 端自动出现这个联系人
+```
+
+### 术语表
+
+| 术语 | 定义 | 不要叫 |
+|------|------|--------|
+| **联系人** | 任何你能发消息的对象 | ~~用户、设备、服务~~ |
+| **Channel** | 连接方式（飞书/终端/Webhook） | ~~数据源、平台~~ |
+| **Thread** | 一个对话 | ~~会话、聊天室~~ |
+| **Message** | 一条消息 | ~~记录、日志~~ |
+| **小林** | AI 助理，能操作所有联系人 | ~~Bot、Agent~~ |
+| **终端** | 通过 daemon 连接的机器 | ~~设备、节点~~ |
 
 ## 仓库结构
 
