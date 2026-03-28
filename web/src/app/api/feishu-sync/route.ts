@@ -69,21 +69,21 @@ function feishuGet(path: string, token: string, params: Record<string, string> =
   })
 }
 
-async function feishuGetWithRetry(path: string, token: string, params: Record<string, string>, maxRetries = 3): Promise<any> {
+async function feishuGetWithRetry(path: string, token: string, params: Record<string, string>, maxRetries = 2): Promise<any> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const res = await feishuGet(path, token, params)
     if (res.code === 0 || res.code === 230002 || res.code === 102004) return res
     if (res.code === 99991403) throw new TokenExpiredError(res.msg)
-    // 限流：指数退避 5s, 10s, 20s
+    // 限流：短暂退避 2s, 4s，2次后直接跳过（Vercel 60s 超时，不能等太久）
     if (res.code === 99991400) {
       if (attempt < maxRetries) {
-        await new Promise(r => setTimeout(r, 5000 * Math.pow(2, attempt)))
+        await new Promise(r => setTimeout(r, 2000 * (attempt + 1)))
         continue
       }
       throw new RateLimitError(res.msg)
     }
     if (attempt < maxRetries) {
-      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)))
+      await new Promise(r => setTimeout(r, 1000))
       continue
     }
     return res

@@ -10,7 +10,7 @@ export function middleware(request: NextRequest) {
   const isHealthApi = request.nextUrl.pathname.startsWith('/api/health')
   const isAgentApi = request.nextUrl.pathname.startsWith('/api/agent-sync') || request.nextUrl.pathname.startsWith('/api/auth/device')
   const isTerminalApi = request.nextUrl.pathname.startsWith('/api/terminal')
-  const isStaticFile = request.nextUrl.pathname.endsWith('.sh') || request.nextUrl.pathname.endsWith('.ps1')
+  const isStaticFile = request.nextUrl.pathname.endsWith('.sh') || request.nextUrl.pathname.endsWith('.ps1') || request.nextUrl.pathname.startsWith('/terminal/')
   // Bearer token 请求不走 cookie 拦截（由 getUserId() 内部验证 token）
   const hasBearerToken = request.headers.get('authorization')?.startsWith('Bearer ')
   const isPublic = isLoginPage || isDeviceAuth || isAuthApi || isHealthApi || isAgentApi || isStaticFile || isTerminalApi || hasBearerToken
