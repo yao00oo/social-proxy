@@ -537,9 +537,9 @@ async function quickSync(userId: string) {
     const activeThreads = await query<{ id: number; platform_thread_id: string; name: string; type: string; last_sync_ts: string }>(
       `SELECT id, platform_thread_id, name, type, last_sync_ts
        FROM threads
-       WHERE user_id = ? AND channel_id = ? AND (last_sync_ts > ? OR last_sync_ts = '0')
+       WHERE user_id = ? AND channel_id = ? AND last_sync_ts > ?
        ORDER BY last_sync_ts DESC
-       LIMIT 500`,
+       LIMIT 100`,
       [userId, channelId, since],
     )
 
@@ -550,11 +550,15 @@ async function quickSync(userId: string) {
 
     let imported = 0
     let errors = 0
+    let apiCalls = 0
+    const MAX_QUICK_API_CALLS = 20 // quickSync 更保守，给 fullSync 留配额
 
     for (const thread of activeThreads) {
+      if (apiCalls >= MAX_QUICK_API_CALLS) break
       try {
         const startTime = String(Math.floor((parseInt(thread.last_sync_ts) - 1000) / 1000))
         const msgs = await listMessages(userToken, thread.platform_thread_id, startTime)
+        apiCalls++
         if (msgs.length === 0) continue
 
         const { imported: chatImported, newTs } = await processChatMessages(
@@ -564,6 +568,7 @@ async function quickSync(userId: string) {
         await updateThreadSyncTs(thread.id, newTs)
         imported += chatImported
       } catch (err: any) {
+        if (err instanceof RateLimitError) break // 限流就停
         if (err instanceof TokenExpiredError) {
           try { userToken = await ensureValidToken(userId) } catch { /* ignore */ }
         }
