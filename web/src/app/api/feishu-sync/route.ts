@@ -475,7 +475,7 @@ async function fullSync(userId: string) {
     } catch {}
   }
 
-  const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[], done: false, remaining: 0 }
+  const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[], done: false, remaining: 0, hasMoreHistory: false }
   const startTime = Date.now()
   const TIMEOUT_MS = 50000 // stop 10s before Vercel 60s limit
   const MAX_API_CALLS_PER_REQUEST = 15 // 飞书 listMessages ~50次/分钟，保守控制
@@ -596,6 +596,9 @@ async function fullSync(userId: string) {
           continue
         }
 
+        // 200 条 = 达到 maxMessages 上限，说明这个群还有更多历史消息
+        if (msgs.length >= 200) result.hasMoreHistory = true
+
         const { imported: chatImported, newTs } = await processChatMessages(
           userId, channelId, thread.id, msgs, lastTs, myUserId, senderNameCache, myName,
         )
@@ -603,7 +606,7 @@ async function fullSync(userId: string) {
 
         result.imported += chatImported
         lastResult = { ...result }
-        log(`    -> 导入 ${chatImported} 条`)
+        log(`    -> 导入 ${chatImported} 条${msgs.length >= 200 ? '（还有更多）' : ''}`)
       } catch (err: any) {
         if (err instanceof RateLimitError) {
           consecutiveRateLimits++
