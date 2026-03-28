@@ -241,8 +241,8 @@ async function listMessages(
   userToken: string,
   chatId: string,
   startTime?: string,
-  maxMessages: number = 500, // 每次请求最多拉 500 条，大群分多次同步
-): Promise<FeishuMessage[]> {
+  maxMessages: number = 200, // 每次最多 200 条（4 页），控制单群耗时
+): Promise<{ messages: FeishuMessage[]; apiCalls: number }> {
   const messages: FeishuMessage[] = []
   let pageToken = ''
   let pages = 0
@@ -281,7 +281,7 @@ async function listMessages(
     pageToken = res.data.page_token
   }
 
-  return messages
+  return { messages, apiCalls: pages }
 }
 
 // ── Process messages for a single chat (shared by fullSync and retry) ──
@@ -296,14 +296,34 @@ async function processChatMessages(
   myName: string | undefined,
 ): Promise<{ imported: number; newTs: string }> {
   let newTs = lastTs
-  let imported = 0
+
+  // 1. 预处理：收集所有需要创建的联系人（去重）
+  const userSenders = new Set<string>()
+  for (const msg of msgs) {
+    if (msg.sender_id && msg.sender_type === 'user' && msg.sender_id !== myUserId) {
+      userSenders.add(msg.sender_id)
+    }
+  }
+
+  // 2. 批量创建联系人和身份（每个 sender 只查一次 DB）
+  const identityCache = new Map<string, number>()
+  for (const senderId of userSenders) {
+    const contactName = senderNameCache.get(senderId) || senderId
+    const contact = await getOrCreateContact(userId, contactName)
+    const identity = await getOrCreateContactIdentity(contact.id, channelId, senderId, contactName)
+    identityCache.set(senderId, identity.id)
+  }
+
+  // 3. 批量构建 INSERT VALUES（一次写入所有消息）
+  const values: string[] = []
+  const params: any[] = []
+  let paramIdx = 1
 
   for (const msg of msgs) {
     const ts = toLocalTime(parseInt(msg.create_time))
     const isSelf = msg.sender_id === myUserId
     const direction = isSelf ? 'sent' : 'received'
 
-    // 解析发送者名字（根据 sender_type 区分人/机器人/系统）
     let senderDisplay: string
     if (isSelf) {
       senderDisplay = myName || '我'
@@ -315,35 +335,34 @@ async function processChatMessages(
       senderDisplay = senderNameCache.get(msg.sender_id) || msg.sender_id
     }
 
-    // Resolve sender contact + identity for real users only (not bots/system)
-    let senderIdentityId: number | undefined
-    if (!isSelf && msg.sender_id && msg.sender_type === 'user') {
-      const contactName = senderNameCache.get(msg.sender_id) || msg.sender_id
-      const contact = await getOrCreateContact(userId, contactName)
-      const identity = await getOrCreateContactIdentity(
-        contact.id, channelId, msg.sender_id, senderDisplay,
-      )
-      senderIdentityId = identity.id
-      await updateContactStats(userId, contactName, ts)
-    }
+    const senderIdentityId = identityCache.get(msg.sender_id) || null
+    const metadata = msg.parent_id ? JSON.stringify({ parent_id: msg.parent_id }) : '{}'
 
-    // Insert unified message
-    await insertUnifiedMessage(userId, threadId, channelId, {
-      direction,
-      senderName: senderDisplay,
-      senderIdentityId,
-      content: msg.content,
-      msgType: msg.msg_type,
-      timestamp: ts,
-      platformMsgId: msg.message_id,
-      metadata: msg.parent_id ? { parent_id: msg.parent_id } : {},
-    })
+    values.push(`($${paramIdx}, $${paramIdx+1}, $${paramIdx+2}, $${paramIdx+3}, $${paramIdx+4}, $${paramIdx+5}, $${paramIdx+6}, $${paramIdx+7}, $${paramIdx+8}, $${paramIdx+9}::jsonb)`)
+    params.push(userId, threadId, channelId, direction, senderIdentityId, senderDisplay, msg.content, ts, msg.message_id, metadata)
+    paramIdx += 10
 
-    imported++
     if (msg.create_time > newTs) newTs = msg.create_time
   }
 
-  return { imported, newTs }
+  if (values.length === 0) return { imported: 0, newTs }
+
+  // 4. 单次批量 INSERT（替代 500 次逐条 INSERT）
+  await exec(
+    `INSERT INTO messages (user_id, thread_id, channel_id, direction, sender_identity_id, sender_name, content, timestamp, platform_msg_id, metadata)
+     VALUES ${values.join(', ')}
+     ON CONFLICT (channel_id, platform_msg_id) DO NOTHING`,
+    params,
+  )
+
+  // 5. 批量更新联系人统计（按 sender 聚合）
+  const lastMsgTs = toLocalTime(parseInt(msgs[msgs.length - 1].create_time))
+  for (const senderId of userSenders) {
+    const contactName = senderNameCache.get(senderId) || senderId
+    await updateContactStats(userId, contactName, lastMsgTs)
+  }
+
+  return { imported: values.length, newTs }
 }
 
 // ── Full sync ──
@@ -447,9 +466,9 @@ async function fullSync(userId: string) {
         const waitMs = consecutiveRateLimits > 0 ? 5000 : 1500
         if (chatIndex > 1) await new Promise(r => setTimeout(r, waitMs))
 
-        const msgs = await listMessages(userToken, chat.chat_id, msgStartTime)
-        apiCallCount++
-        consecutiveRateLimits = 0 // 成功了，重置计数
+        const { messages: msgs, apiCalls } = await listMessages(userToken, chat.chat_id, msgStartTime)
+        apiCallCount += apiCalls
+        consecutiveRateLimits = 0
 
         if (msgs.length === 0) {
           // 没有新消息，标记为已同步（避免下次重复拉）
@@ -474,7 +493,7 @@ async function fullSync(userId: string) {
           log(`    token 过期，刷新后重试...`)
           try {
             userToken = await ensureValidToken(userId)
-            const retryMsgs = await listMessages(userToken, chat.chat_id, msgStartTime)
+            const { messages: retryMsgs } = await listMessages(userToken, chat.chat_id, msgStartTime)
             consecutiveRateLimits = 0
             const { imported: retryImported, newTs: retryTs } = await processChatMessages(
               userId, channelId, thread.id, retryMsgs, lastTs, myUserId, senderNameCache, myName,
@@ -574,8 +593,8 @@ async function quickSync(userId: string) {
       if (apiCalls >= MAX_QUICK_API_CALLS) break
       try {
         const startTime = String(Math.floor((parseInt(thread.last_sync_ts) - 1000) / 1000))
-        const msgs = await listMessages(userToken, thread.platform_thread_id, startTime)
-        apiCalls++
+        const { messages: msgs, apiCalls: callsUsed } = await listMessages(userToken, thread.platform_thread_id, startTime)
+        apiCalls += callsUsed
         if (msgs.length === 0) continue
 
         const { imported: chatImported, newTs } = await processChatMessages(
