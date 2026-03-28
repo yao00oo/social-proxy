@@ -248,11 +248,14 @@ async function listMessages(
   let pages = 0
   const MAX_PAGES = Math.ceil(maxMessages / 50)
 
+  // 有 startTime = 增量同步（从旧到新追赶）；无 startTime = 首次同步（先拉最新）
+  const sortType = startTime ? 'ByCreateTimeAsc' : 'ByCreateTimeDesc'
+
   while (pages++ < MAX_PAGES) {
     const params: Record<string, string> = {
       container_id: chatId,
       container_id_type: 'chat',
-      sort_type: 'ByCreateTimeAsc',
+      sort_type: sortType,
       page_size: '50',
     }
     if (startTime) params.start_time = startTime
