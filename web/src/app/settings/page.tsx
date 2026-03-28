@@ -486,6 +486,10 @@ export default function SettingsPage() {
   // Expanded panels
   const [expandedCard, setExpandedCard] = useState<string | null>(null)
 
+  // Channels from API
+  const [channels, setChannels] = useState<Array<{id: number, platform: string, name: string, enabled: number, msg_count: number, thread_count: number, sync_state: any}>>([])
+  const [showAddSource, setShowAddSource] = useState(false)
+
   // Terminal
   const [terminalConnected, setTerminalConnected] = useState(false)
   const [terminalName, setTerminalName] = useState<string | null>(null)
@@ -592,6 +596,8 @@ export default function SettingsPage() {
     fetch('/api/settings').then(r => r.json()).then(data => {
       if (data.settings?.agent_model) setSelectedModel(data.settings.agent_model)
     }).catch(() => {})
+    // Load channels
+    fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
     // Check terminal connection
     fetch('/api/contacts?limit=500').then(r => r.json()).then(data => {
       const term = (data.contacts || []).find((c: any) => c.platform === 'terminal')
@@ -849,91 +855,121 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Section 1: 让小林了解你 */}
+        {/* Section 1: 数据源 */}
         <div className="mb-8">
-          <SectionHeader icon="psychology" title="让小林了解你" />
+          <SectionHeader icon="database" title="数据源" />
+
+          {/* Connected channel cards + Add card */}
           <div className="grid grid-cols-3 gap-3">
-            {/* WeChat */}
-            <SourceCard
-              icon="chat_bubble"
-              iconClass="text-teal-600"
-              title="微信"
-              subtitle="导入聊天记录"
-              connected={importResult !== null}
-              connectedLabel="已同步历史消息"
-              actionLabel={importing ? '导入中...' : '导入'}
-              onAction={() => fileRef.current?.click()}
-            />
-            <input ref={fileRef} type="file" accept=".txt,.csv" className="hidden" onChange={handleImport} disabled={importing} />
+            {channels.map(ch => {
+              const platformIcons: Record<string, string> = { feishu: 'corporate_fare', gmail: 'mail', wechat: 'chat_bubble', imessage: 'sms', terminal: 'terminal', whatsapp: 'perm_phone_msg', telegram: 'send', custom: 'extension' }
+              const platformColors: Record<string, string> = { feishu: 'text-blue-600', gmail: 'text-red-500', wechat: 'text-teal-600', imessage: 'text-green-600', terminal: 'text-on-surface' }
+              const icon = platformIcons[ch.platform] || 'extension'
+              const color = platformColors[ch.platform] || 'text-on-surface-variant'
+              const syncState = ch.sync_state
+              const isSyncing = syncState && typeof syncState === 'object' && Object.keys(syncState).length > 0
+              const statusDot = ch.enabled ? (isSyncing ? 'bg-teal-500' : 'bg-yellow-400') : 'bg-gray-300'
+              const statusText = ch.enabled ? (isSyncing ? '已同步' : '同步中') : '未同步'
+              const statusTextColor = ch.enabled ? (isSyncing ? 'text-teal-700' : 'text-yellow-700') : 'text-gray-500'
+              const statLabel = ch.platform === 'gmail' ? `${ch.msg_count} 封邮件` : `${ch.thread_count} 个会话`
 
-            {/* Feishu */}
-            <SourceCard
-              icon="corporate_fare"
-              iconClass="text-blue-600"
-              title="飞书"
-              subtitle="企业消息同步"
-              connected={feishuAuthed}
-              connectedLabel="企业账号已关联"
-              actionLabel={feishuAuthing ? '等待授权...' : '授权'}
-              onAction={() => {
-                if (feishuAuthed) {
-                  setExpandedCard(expandedCard === 'feishu' ? null : 'feishu')
-                } else {
-                  setExpandedCard('feishu')
-                }
-              }}
-            />
+              return (
+                <div key={ch.id}
+                  className="bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-3.5 h-[100px] flex flex-col justify-between group cursor-pointer hover:bg-surface-container-low transition-colors"
+                  onClick={() => {
+                    // Clicking an existing channel card: show its platform panel
+                    const panelKey = ch.platform === 'gmail' ? 'gmail-data' : ch.platform
+                    setExpandedCard(expandedCard === panelKey ? null : panelKey)
+                    setShowAddSource(false)
+                  }}
+                >
+                  <div className="flex items-start gap-2.5">
+                    <span className={`material-symbols-outlined text-xl ${color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{icon}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-on-surface truncate">{ch.name}</p>
+                      <p className="text-xs text-on-surface-variant mt-0.5 truncate">{statLabel}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-2 h-2 rounded-full ${statusDot}`} />
+                    <span className={`text-xs ${statusTextColor}`}>{statusText}</span>
+                  </div>
+                </div>
+              )
+            })}
 
-            {/* iMessage */}
-            <SourceCard
-              icon="sms"
-              iconClass="text-green-600"
-              title="iMessage"
-              subtitle="通过 Mac 同步"
-              actionLabel="设置"
-              onAction={() => setExpandedCard(expandedCard === 'imessage' ? null : 'imessage')}
-            />
-
-            {/* Gmail */}
-            <SourceCard
-              icon="mail"
-              iconClass="text-red-500"
-              title="Gmail"
-              subtitle="邮件同步"
-              connected={gmailAuthed}
-              connectedLabel={gmailEmail || '已授权'}
-              actionLabel={gmailAuthed ? '已连接' : '授权'}
-              onAction={() => setExpandedCard(expandedCard === 'gmail-data' ? null : 'gmail-data')}
-            />
-
-            {/* 终端/CLI */}
-            <SourceCard
-              icon="terminal"
-              iconClass="text-on-surface"
-              title="终端/CLI"
-              subtitle="远程控制 & 消息同步"
-              connected={terminalConnected}
-              connectedLabel={terminalName || '已连接'}
-              actionLabel="连接终端"
-              onAction={() => setExpandedCard(expandedCard === 'terminal' ? null : 'terminal')}
-            />
-
-            {/* WhatsApp */}
-            <SourceCard icon="perm_phone_msg" title="WhatsApp" disabled disabledLabel="即将支持" />
-
-            {/* Telegram */}
-            <SourceCard icon="send" title="Telegram" disabled disabledLabel="即将支持" />
-
-            {/* More */}
-            <SourceCard icon="add" title="更多数据源" dashed />
+            {/* Add data source card */}
+            <div
+              className="flex flex-col items-center justify-center gap-1 rounded-[10px] border border-dashed border-outline-variant/40 p-3.5 h-[100px] text-outline cursor-pointer hover:border-primary hover:text-primary transition-colors"
+              onClick={() => { setShowAddSource(!showAddSource); setExpandedCard(null) }}
+            >
+              <span className="material-symbols-outlined text-2xl">add</span>
+              <span className="text-xs">添加数据源</span>
+            </div>
           </div>
+
+          {/* Hidden file input for wechat import */}
+          <input ref={fileRef} type="file" accept=".txt,.csv" className="hidden" onChange={handleImport} disabled={importing} />
+
+          {/* Add source dropdown */}
+          {showAddSource && (
+            <div className="mt-3 bg-white rounded-xl p-4 ghost-border ambient-shadow">
+              <p className="text-sm font-medium text-on-surface mb-3">选择平台</p>
+              <div className="grid grid-cols-4 gap-2">
+                {[
+                  { key: 'feishu', icon: 'corporate_fare', color: 'text-blue-600', label: '飞书' },
+                  { key: 'gmail-data', icon: 'mail', color: 'text-red-500', label: 'Gmail' },
+                  { key: 'imessage', icon: 'sms', color: 'text-green-600', label: 'iMessage' },
+                  { key: 'terminal', icon: 'terminal', color: 'text-on-surface', label: '终端/CLI' },
+                  { key: 'wechat', icon: 'chat_bubble', color: 'text-teal-600', label: '微信' },
+                  { key: 'whatsapp', icon: 'perm_phone_msg', color: 'text-gray-400', label: 'WhatsApp', disabled: true },
+                  { key: 'telegram', icon: 'send', color: 'text-gray-400', label: 'Telegram', disabled: true },
+                ].map(p => (
+                  <button
+                    key={p.key}
+                    disabled={p.disabled}
+                    onClick={() => {
+                      setShowAddSource(false)
+                      if (p.key === 'wechat') {
+                        fileRef.current?.click()
+                      } else {
+                        setExpandedCard(p.key)
+                      }
+                    }}
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl transition-colors ${
+                      p.disabled
+                        ? 'opacity-40 cursor-not-allowed'
+                        : 'hover:bg-surface-container-low cursor-pointer'
+                    }`}
+                  >
+                    <span className={`material-symbols-outlined text-2xl ${p.color}`} style={{ fontVariationSettings: "'FILL' 1" }}>{p.icon}</span>
+                    <span className="text-xs text-on-surface">{p.label}</span>
+                    {p.disabled && <span className="text-[10px] text-outline">即将支持</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* WeChat import result */}
+          {importResult && (
+            <div className="mt-3 p-3 bg-surface-container-low rounded-xl text-sm text-on-surface-variant">
+              导入完成：成功 <span className="text-primary font-mono font-semibold">{importResult.imported}</span> 条，
+              跳过 <span className="text-outline font-mono">{importResult.skipped}</span> 条
+            </div>
+          )}
 
           {/* Terminal expanded panel */}
           {expandedCard === 'terminal' && (
-            <div className="bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-5 space-y-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="material-symbols-outlined text-on-surface">terminal</span>
-                <h3 className="text-sm font-bold text-on-surface">连接终端</h3>
+            <div className="mt-3 bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-5 space-y-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-on-surface">terminal</span>
+                  <h3 className="text-sm font-bold text-on-surface">连接终端</h3>
+                </div>
+                <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
               </div>
 
               <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -971,15 +1007,6 @@ export default function SettingsPage() {
                   <span className="text-xs text-teal-700 font-medium">{terminalName} 已连接</span>
                 </div>
               )}
-
-            </div>
-          )}
-
-          {/* WeChat import result */}
-          {importResult && (
-            <div className="mt-3 p-3 bg-surface-container-low rounded-xl text-sm text-on-surface-variant">
-              导入完成：成功 <span className="text-primary font-mono font-semibold">{importResult.imported}</span> 条，
-              跳过 <span className="text-outline font-mono">{importResult.skipped}</span> 条
             </div>
           )}
 
@@ -1008,6 +1035,18 @@ export default function SettingsPage() {
                     <button onClick={handleFeishuSync} disabled={feishuSyncing}
                       className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-surface-container-highest">
                       {feishuSyncing ? '同步中...' : '立即同步'}
+                    </button>
+                    <button onClick={async () => {
+                      const feishuChannel = channels.find(c => c.platform === 'feishu')
+                      if (feishuChannel && confirm('确定要断开飞书连接吗？这将删除所有飞书数据。')) {
+                        await fetch(`/api/channels?id=${feishuChannel.id}`, { method: 'DELETE' })
+                        setChannels(prev => prev.filter(c => c.id !== feishuChannel.id))
+                        setFeishuAuthed(false)
+                        setExpandedCard(null)
+                      }
+                    }}
+                      className="px-4 py-2 rounded-xl text-red-600 bg-red-50 text-sm font-medium transition-colors cursor-pointer hover:bg-red-100">
+                      断开连接
                     </button>
                   </div>
 
@@ -1107,6 +1146,71 @@ export default function SettingsPage() {
             </div>
           )}
 
+          {/* Gmail data expanded panel */}
+          {expandedCard === 'gmail-data' && (
+            <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-on-surface">Gmail 数据源配置</p>
+                <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
+                  <span className="material-symbols-outlined text-lg">close</span>
+                </button>
+              </div>
+              <p className="text-outline text-xs">
+                在{' '}
+                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" className="text-secondary underline">Google Cloud Console</a>
+                {' '}创建 OAuth Client ID，回调地址填{' '}
+                <code className="text-primary font-mono text-xs">https://relay.botook.ai/gmail/callback</code>
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Gmail Client ID" value={settings.gmail_client_id} onChange={(v) => setSettings({ ...settings, gmail_client_id: v })} placeholder="xxx.apps.googleusercontent.com" />
+                <Input label="Client Secret" type="password" value={settings.gmail_client_secret} onChange={(v) => setSettings({ ...settings, gmail_client_secret: v })} placeholder="GOCSPX-xxx" />
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                {gmailAuthed ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-teal-500" />
+                    <span className="text-sm text-teal-700">{gmailEmail}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-slate-300" />
+                    <span className="text-sm text-outline">未授权</span>
+                  </div>
+                )}
+                <button onClick={handleGmailAuth} disabled={!settings.gmail_client_id}
+                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
+                  {gmailAuthed ? '重新授权' : '授权 Gmail'}
+                </button>
+                {gmailAuthed && (
+                  <>
+                    <button onClick={handleGmailSync} disabled={gmailSyncing}
+                      className="px-4 py-2 rounded-xl bg-surface-container-high text-on-surface text-sm font-medium border border-outline-variant transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-surface-container-highest">
+                      {gmailSyncing ? '同步中...' : '同步邮件'}
+                    </button>
+                    <button onClick={async () => {
+                      const gmailChannel = channels.find(c => c.platform === 'gmail')
+                      if (gmailChannel && confirm('确定要断开 Gmail 连接吗？这将删除所有 Gmail 数据。')) {
+                        await fetch(`/api/channels?id=${gmailChannel.id}`, { method: 'DELETE' })
+                        setChannels(prev => prev.filter(c => c.id !== gmailChannel.id))
+                        setGmailAuthed(false)
+                        setExpandedCard(null)
+                      }
+                    }}
+                      className="px-4 py-2 rounded-xl text-red-600 bg-red-50 text-sm font-medium transition-colors cursor-pointer hover:bg-red-100">
+                      断开连接
+                    </button>
+                  </>
+                )}
+                {gmailSyncResult && !gmailSyncResult.error && (
+                  <span className="text-sm text-on-surface-variant">导入 <span className="text-primary font-mono font-semibold">{gmailSyncResult.imported}</span> 封</span>
+                )}
+              </div>
+              {gmailSyncLog.length > 0 && (
+                <LogPanel log={gmailSyncLog} running={gmailSyncing} />
+              )}
+            </div>
+          )}
+
           {/* iMessage expanded panel */}
           {expandedCard === 'imessage' && (
             <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
@@ -1155,12 +1259,11 @@ export default function SettingsPage() {
               </div>
 
               <div className="bg-surface rounded-lg p-3 text-xs text-on-surface-variant space-y-1">
-                <p className="font-medium text-on-surface">💡 常见问题</p>
-                <p>• 需要 macOS 系统和 Node.js</p>
-                <p>• 如果提示权限不足，在「系统设置 → 隐私与安全性 → 完全磁盘访问」中添加终端</p>
-                <p>• agent 会在后台运行，关闭终端后需要重新启动</p>
+                <p className="font-medium text-on-surface">常见问题</p>
+                <p>需要 macOS 系统和 Node.js</p>
+                <p>如果提示权限不足，在「系统设置 - 隐私与安全性 - 完全磁盘访问」中添加终端</p>
+                <p>agent 会在后台运行，关闭终端后需要重新启动</p>
               </div>
-
             </div>
           )}
         </div>
