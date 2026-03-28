@@ -5,7 +5,7 @@ set -e
 
 INSTALL_DIR="$HOME/.socialproxy"
 BIN_DIR="$INSTALL_DIR/bin"
-REPO="https://raw.githubusercontent.com/yao00oo/social-proxy/main/socialproxy-terminal"
+REPO="https://botook.ai/terminal"
 
 echo ""
 echo "  Social Proxy Terminal"
