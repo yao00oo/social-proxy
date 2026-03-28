@@ -12,12 +12,10 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
-    "chokidar": "^4.0.0",
-    "open": "^10.0.0"
-  },
-  "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
+    "chokidar": "^4.0.0",
+    "open": "^10.0.0",
     "typescript": "^5.0.0",
     "ts-node": "^10.0.0"
   }
