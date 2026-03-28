@@ -358,8 +358,9 @@ async function fullSync(userId: string) {
     const myName = await getSetting('feishu_user_name', userId)
     const myUserId = await getSetting('feishu_user_id', userId)
 
-    // 0. Get or create the feishu channel
-    const channel = await getOrCreateChannel(userId, 'feishu', 'Feishu')
+    // 0. Get or create the feishu channel（用飞书用户名区分多账户）
+    const channelName = myName ? `飞书·${myName}` : 'Feishu'
+    const channel = await getOrCreateChannel(userId, 'feishu', channelName)
     const channelId = channel.id
 
     // 1. Build sender name cache from contact_identities
@@ -526,7 +527,8 @@ async function quickSync(userId: string) {
     const myUserId = await getSetting('feishu_user_id', userId)
 
     // Get or create the feishu channel
-    const channel = await getOrCreateChannel(userId, 'feishu', 'Feishu')
+    const channelName = myName ? `飞书·${myName}` : 'Feishu'
+    const channel = await getOrCreateChannel(userId, 'feishu', channelName)
     const channelId = channel.id
 
     // Build sender name cache from contact_identities

@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 import { query, queryOne, exec } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 import {
-  getOrCreateChannel,
+  getChannelsByPlatform,
   getOrCreateThread,
   getOrCreateContact,
   getOrCreateContactIdentity,
@@ -151,9 +151,13 @@ export async function POST() {
 
   ;(async () => {
     try {
-      // Get or create the gmail channel
-      const channel = await getOrCreateChannel(userId, 'gmail', 'Gmail')
+      // 同步所有 Gmail channel（支持多账户）
+      const gmailChannels = await getChannelsByPlatform(userId, 'gmail')
+      if (gmailChannels.length === 0) throw new Error('未连接 Gmail，请先在设置页授权')
+
+      for (const channel of gmailChannels) {
       const channelId = channel.id
+      log(`同步 Gmail 账户: ${channel.name}`)
 
       const token = await ensureToken(channelId)
 
@@ -275,7 +279,8 @@ export async function POST() {
       }
 
       lastResult = { imported, skipped, total: msgIds.length, needSummarize: needSummarize.length }
-      log(`\n同步完成: 导入 ${imported} 封，跳过 ${skipped} 封`)
+      log(`\n${channel.name} 同步完成: 导入 ${imported} 封，跳过 ${skipped} 封`)
+      } // end for gmailChannels
     } catch (e: any) {
       log(`同步失败: ${e.message}`)
       lastResult = { error: e.message }

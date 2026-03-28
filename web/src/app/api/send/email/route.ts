@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import nodemailer from 'nodemailer'
 import { query, queryOne, exec } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
-import { getOrCreateChannel, getOrCreateThread, insertUnifiedMessage, updateContactStats } from '@/lib/sync-helpers'
+import { getChannelsByPlatform, getOrCreateThread, insertUnifiedMessage, updateContactStats } from '@/lib/sync-helpers'
 
 export async function POST(req: NextRequest) {
   const userId = await getUserId()
@@ -88,7 +88,12 @@ export async function POST(req: NextRequest) {
 
     // Record sent message — find or create thread
     const now = new Date().toISOString()
-    const channel = await getOrCreateChannel(userId, 'gmail', 'Gmail')
+    const gmailChannels = await getChannelsByPlatform(userId, 'gmail')
+    const channel = gmailChannels[0] || { id: 0 }
+    if (!channel.id) {
+      // 没有 gmail channel，直接记录消息不关联 channel
+      return NextResponse.json({ success: true, mode: 'sent', message: `邮件已发送至 ${email}` })
+    }
     const thread = await getOrCreateThread(userId, channel.id, `email:${email}`, contact_name, 'email_thread')
 
     await insertUnifiedMessage(userId, thread.id, channel.id, {

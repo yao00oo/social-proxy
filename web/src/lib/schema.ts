@@ -73,7 +73,7 @@ export const channels = pgTable('channels', {
   createdAt: timestamp('created_at', { mode: 'date' }).defaultNow(),
 }, (t) => [
   index('idx_channels_user').on(t.userId),
-  index('idx_channels_user_platform').on(t.userId, t.platform),
+  uniqueIndex('idx_channels_user_platform_name').on(t.userId, t.platform, t.name),
 ])
 
 // ════════════════════════════════════════════════════════

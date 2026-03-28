@@ -9,20 +9,31 @@ export async function getOrCreateChannel(
   name: string,
   credentials: any = {},
 ): Promise<{ id: number }> {
+  // 按 (user_id, platform, name) 查找，支持同平台多账户
   const existing = await queryOne<{ id: number }>(
-    'SELECT id FROM channels WHERE user_id = ? AND platform = ?',
-    [userId, platform],
+    'SELECT id FROM channels WHERE user_id = ? AND platform = ? AND name = ?',
+    [userId, platform, name],
   )
   if (existing) return existing
 
   const rows = await query<{ id: number }>(
     `INSERT INTO channels (user_id, platform, name, credentials)
      VALUES (?, ?, ?, ?::jsonb)
-     ON CONFLICT (user_id, platform) DO UPDATE SET name = EXCLUDED.name
      RETURNING id`,
     [userId, platform, name, JSON.stringify(credentials)],
   )
   return rows[0]
+}
+
+// 获取用户某平台的所有 channel（支持多账户）
+export async function getChannelsByPlatform(
+  userId: string,
+  platform: string,
+): Promise<Array<{ id: number; name: string; credentials: any }>> {
+  return query<{ id: number; name: string; credentials: any }>(
+    'SELECT id, name, credentials FROM channels WHERE user_id = ? AND platform = ? AND enabled = 1',
+    [userId, platform],
+  )
 }
 
 export async function getChannelCredentials(channelId: number): Promise<any> {
