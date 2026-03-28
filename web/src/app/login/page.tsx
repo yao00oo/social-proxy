@@ -28,6 +28,11 @@ export default function LoginPage() {
         <p className="text-outline text-xs">
           登录后可管理你的社交消息、联系人和 AI 助手
         </p>
+
+        <div className="text-outline text-xs space-x-3">
+          <a href="/privacy" className="hover:text-on-surface-variant underline">Privacy Policy</a>
+          <a href="/terms" className="hover:text-on-surface-variant underline">Terms of Service</a>
+        </div>
       </div>
     </div>
   )

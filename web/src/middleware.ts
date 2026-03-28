@@ -12,10 +12,11 @@ export function middleware(request: NextRequest) {
   const isTerminalApi = request.nextUrl.pathname.startsWith('/api/terminal')
   const isStaticFile = request.nextUrl.pathname.endsWith('.sh') || request.nextUrl.pathname.endsWith('.ps1') || request.nextUrl.pathname.startsWith('/terminal/')
   const isInstallPage = request.nextUrl.pathname.startsWith('/install')
+  const isLegalPage = request.nextUrl.pathname.startsWith('/privacy') || request.nextUrl.pathname.startsWith('/terms')
   const isConnectApi = request.nextUrl.pathname.startsWith('/api/connect') && request.method === 'GET'
   // Bearer token 请求不走 cookie 拦截（由 getUserId() 内部验证 token）
   const hasBearerToken = request.headers.get('authorization')?.startsWith('Bearer ')
-  const isPublic = isLoginPage || isDeviceAuth || isAuthApi || isHealthApi || isAgentApi || isStaticFile || isTerminalApi || isInstallPage || isConnectApi || hasBearerToken
+  const isPublic = isLoginPage || isDeviceAuth || isAuthApi || isHealthApi || isAgentApi || isStaticFile || isTerminalApi || isInstallPage || isLegalPage || isConnectApi || hasBearerToken
 
   if (!token && !isPublic) {
     return NextResponse.redirect(new URL('/login', request.url))
