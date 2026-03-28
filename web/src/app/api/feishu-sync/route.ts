@@ -350,6 +350,8 @@ async function fullSync(userId: string) {
   const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[], done: false, remaining: 0 }
   const startTime = Date.now()
   const TIMEOUT_MS = 50000 // stop 10s before Vercel 60s limit
+  const MAX_API_CALLS_PER_REQUEST = 40 // 飞书 listMessages 限流窗口约 1 分钟，控制单次请求调用量
+  let apiCallCount = 0
 
   try {
     let userToken = await ensureValidToken(userId)
@@ -399,6 +401,13 @@ async function fullSync(userId: string) {
         break
       }
 
+      // API 调用量控制（避免触发飞书限流）
+      if (apiCallCount >= MAX_API_CALLS_PER_REQUEST) {
+        result.remaining = sortedChats.length - chatIndex
+        log(`📊 已调用 ${apiCallCount} 次 API，暂停本轮避免限流，剩余 ${result.remaining} 个`)
+        break
+      }
+
       // 连续限流太多次，提前退出等下一轮
       if (consecutiveRateLimits >= MAX_CONSECUTIVE_RATE_LIMITS) {
         result.remaining = sortedChats.length - chatIndex
@@ -423,6 +432,7 @@ async function fullSync(userId: string) {
         if (chatIndex > 1) await new Promise(r => setTimeout(r, waitMs))
 
         const msgs = await listMessages(userToken, chat.chat_id, msgStartTime)
+        apiCallCount++
         consecutiveRateLimits = 0 // 成功了，重置计数
 
         if (msgs.length === 0) {
