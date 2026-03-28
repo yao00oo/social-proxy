@@ -1,5 +1,5 @@
 // Social Proxy MCP Server 入口
-// 通过 stdio 与 Claude 通信，暴露三个工具: get_contacts / get_history / send_email
+// 通过 stdio 与 Claude 通信，暴露工具: get_contacts / get_history / send_email 等
 
 // 加载项目根目录的 .env 文件
 import fs from 'fs'
