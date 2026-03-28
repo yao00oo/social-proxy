@@ -284,6 +284,65 @@ async function listMessages(
   return { messages, apiCalls: pages }
 }
 
+// ── Discover p2p chats via search API ──
+async function discoverP2pChats(
+  userToken: string,
+  channelId: number,
+  userId: string,
+  knownChatIds: Set<string>,
+): Promise<Array<{ chat_id: string; name: string }>> {
+  const discovered: Array<{ chat_id: string; name: string }> = []
+  const foundChatIds = new Set<string>()
+
+  // 用多个关键词搜 p2p 消息，覆盖更多会话
+  const keywords = ['好', '的', '了', '嗯', 'ok', '是', '谢', '收到', '1', '哈']
+
+  for (const kw of keywords) {
+    try {
+      const body = JSON.stringify({ query: kw, chat_type: 'p2p_chat' })
+      const res = await new Promise<any>((resolve, reject) => {
+        const https = require('https')
+        const req = https.request('https://open.feishu.cn/open-apis/search/v2/message?page_size=50&user_id_type=open_id', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+        }, (res: any) => {
+          let d = ''
+          res.on('data', (c: any) => d += c)
+          res.on('end', () => { try { resolve(JSON.parse(d)) } catch { reject(new Error('parse error')) } })
+        })
+        req.on('error', reject)
+        req.write(body)
+        req.end()
+      })
+
+      if (res.code !== 0 || !res.data?.items?.length) continue
+
+      // 从搜索结果中提取 chat_id
+      for (const msgId of res.data.items.slice(0, 5)) { // 每个关键词只查 5 条的详情
+        try {
+          const msgRes = await feishuGet(`/im/v1/messages/${msgId}`, userToken, {})
+          if (msgRes.code === 0 && msgRes.data?.items?.[0]) {
+            const chatId = msgRes.data.items[0].chat_id
+            if (chatId && !knownChatIds.has(chatId) && !foundChatIds.has(chatId)) {
+              foundChatIds.add(chatId)
+              // 查 chat 详情确认是 p2p
+              const chatRes = await feishuGet(`/im/v1/chats/${chatId}`, userToken, {})
+              if (chatRes.code === 0 && chatRes.data?.chat_mode === 'p2p') {
+                const name = chatRes.data?.name || chatId
+                discovered.push({ chat_id: chatId, name })
+              }
+            }
+          }
+        } catch { /* skip */ }
+        await new Promise(r => setTimeout(r, 300))
+      }
+    } catch { /* skip keyword */ }
+    await new Promise(r => setTimeout(r, 500))
+  }
+
+  return discovered
+}
+
 // ── Process messages for a single chat (shared by fullSync and retry) ──
 async function processChatMessages(
   userId: string,
@@ -410,13 +469,31 @@ async function fullSync(userId: string) {
     // 1. Build sender name cache from contact_identities
     const senderNameCache = await buildSenderNameCache(userId, channelId)
 
-    // 2. List all chats
+    // 2. List all chats (group only — listChats doesn't return p2p)
     log('获取会话列表...')
     const chats = await listChats(userToken)
+
+    // 2.5. Discover p2p chats via search API (only if we have few p2p threads)
+    const existingP2pCount = await queryOne<{ n: number }>(
+      "SELECT COUNT(*) as n FROM threads WHERE user_id = ? AND channel_id = ? AND type = 'dm'",
+      [userId, channelId],
+    )
+    if ((existingP2pCount?.n || 0) < 5 && Date.now() - startTime < 30000) {
+      log('搜索私聊...')
+      const knownIds = new Set(chats.map(c => c.chat_id))
+      const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds)
+      if (p2pChats.length > 0) {
+        for (const p of p2pChats) {
+          chats.push({ chat_id: p.chat_id, name: p.name, chat_type: 'p2p' })
+        }
+        log(`发现 ${p2pChats.length} 个私聊`)
+      }
+    }
+
     result.chats = chats.length
     log(`共 ${chats.length} 个会话`)
 
-    // 3. Load existing threads from DB (one query instead of 357)
+    // 3. Load existing threads from DB (one query instead of N)
     const existingThreads = await query<{ id: number; platform_thread_id: string; last_sync_ts: string }>(
       'SELECT id, platform_thread_id, last_sync_ts FROM threads WHERE user_id = ? AND channel_id = ?',
       [userId, channelId],
