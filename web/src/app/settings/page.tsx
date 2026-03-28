@@ -1442,8 +1442,8 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <p className="text-sm text-outline">一行命令，把小林装到你的 Claude Code、OpenClaw 或 Cursor 里。</p>
                 <div className="bg-gray-900 rounded-xl p-4 font-mono text-sm text-green-400 flex items-center justify-between">
-                  <span>curl -fsSL https://botook.ai/install.sh | bash</span>
-                  <button onClick={() => { navigator.clipboard.writeText('curl -fsSL https://botook.ai/install.sh | bash'); setInstallCopied('cmd') }} className="text-gray-500 hover:text-white ml-3 cursor-pointer">
+                  <span>curl -fsSL https://botook.ai/install-ai-connector.sh | bash</span>
+                  <button onClick={() => { navigator.clipboard.writeText('curl -fsSL https://botook.ai/install-ai-connector.sh | bash'); setInstallCopied('cmd') }} className="text-gray-500 hover:text-white ml-3 cursor-pointer">
                     <span className="material-symbols-outlined text-lg">{installCopied === 'cmd' ? 'check' : 'content_copy'}</span>
                   </button>
                 </div>

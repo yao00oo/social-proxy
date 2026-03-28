@@ -1,6 +1,7 @@
 #!/bin/bash
-# Botook — 一行安装小林到你的 AI 工具
-# curl -fsSL https://botook.ai/install.sh | bash
+# Botook AI Connector — 让 Claude Code / OpenClaw / Cursor 连上你的社交消息数据
+# 安装内容：下载 skill 文件（SKILL.md + setup.sh）到 AI 工具的 skills 目录
+# curl -fsSL https://botook.ai/install-ai-connector.sh | bash
 
 set -e
 
