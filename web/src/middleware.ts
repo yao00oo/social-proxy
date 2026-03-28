@@ -10,7 +10,7 @@ export function middleware(request: NextRequest) {
   const isHealthApi = request.nextUrl.pathname.startsWith('/api/health')
   const isAgentApi = request.nextUrl.pathname.startsWith('/api/agent-sync') || request.nextUrl.pathname.startsWith('/api/auth/device')
   const isTerminalApi = request.nextUrl.pathname.startsWith('/api/terminal')
-  const isStaticFile = request.nextUrl.pathname.endsWith('.sh') || request.nextUrl.pathname.endsWith('.ps1') || request.nextUrl.pathname.startsWith('/terminal/')
+  const isStaticFile = request.nextUrl.pathname.endsWith('.sh') || request.nextUrl.pathname.endsWith('.ps1') || request.nextUrl.pathname.endsWith('.html') || request.nextUrl.pathname.startsWith('/terminal/')
   const isInstallPage = request.nextUrl.pathname.startsWith('/install')
   const isLegalPage = request.nextUrl.pathname.startsWith('/privacy') || request.nextUrl.pathname.startsWith('/terms')
   const isConnectApi = request.nextUrl.pathname.startsWith('/api/connect') && request.method === 'GET'
