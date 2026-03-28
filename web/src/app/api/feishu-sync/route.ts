@@ -347,13 +347,23 @@ async function processChatMessages(
 
   if (values.length === 0) return { imported: 0, newTs }
 
-  // 4. 单次批量 INSERT（替代 500 次逐条 INSERT）
-  await exec(
-    `INSERT INTO messages (user_id, thread_id, channel_id, direction, sender_identity_id, sender_name, content, timestamp, platform_msg_id, metadata)
-     VALUES ${values.join(', ')}
-     ON CONFLICT (channel_id, platform_msg_id) DO NOTHING`,
-    params,
-  )
+  // 4. 分批 INSERT（每批 50 条，避免 SQL 过长）
+  const BATCH_SIZE = 50
+  for (let i = 0; i < values.length; i += BATCH_SIZE) {
+    const batchValues = values.slice(i, i + BATCH_SIZE)
+    const batchParams = params.slice(i * 10, (i + BATCH_SIZE) * 10)
+    // 重新编号参数（$1, $2, ...）
+    let idx = 1
+    const renumbered = batchValues.map(v => {
+      return v.replace(/\$\d+/g, () => `$${idx++}`)
+    })
+    await exec(
+      `INSERT INTO messages (user_id, thread_id, channel_id, direction, sender_identity_id, sender_name, content, timestamp, platform_msg_id, metadata)
+       VALUES ${renumbered.join(', ')}
+       ON CONFLICT (channel_id, platform_msg_id) DO NOTHING`,
+      batchParams,
+    )
+  }
 
   // 5. 批量更新联系人统计（按 sender 聚合）
   const lastMsgTs = toLocalTime(parseInt(msgs[msgs.length - 1].create_time))
@@ -406,12 +416,22 @@ async function fullSync(userId: string) {
     result.chats = chats.length
     log(`共 ${chats.length} 个会话`)
 
-    // 3. Upsert threads for all chats
+    // 3. Load existing threads from DB (one query instead of 357)
+    const existingThreads = await query<{ id: number; platform_thread_id: string; last_sync_ts: string }>(
+      'SELECT id, platform_thread_id, last_sync_ts FROM threads WHERE user_id = ? AND channel_id = ?',
+      [userId, channelId],
+    )
     const threadMap = new Map<string, { id: number; last_sync_ts: string }>()
+    for (const t of existingThreads) {
+      threadMap.set(t.platform_thread_id, { id: t.id, last_sync_ts: t.last_sync_ts })
+    }
+    // Only create threads for NEW chats (not in DB yet)
     for (const chat of chats) {
-      const chatType = chat.chat_type === 'p2p' ? 'dm' : 'group'
-      const thread = await getOrCreateThread(userId, channelId, chat.chat_id, chat.name, chatType)
-      threadMap.set(chat.chat_id, thread)
+      if (!threadMap.has(chat.chat_id)) {
+        const chatType = chat.chat_type === 'p2p' ? 'dm' : 'group'
+        const thread = await getOrCreateThread(userId, channelId, chat.chat_id, chat.name, chatType)
+        threadMap.set(chat.chat_id, thread)
+      }
     }
 
     // 4. Sort chats: already synced (has messages, needs incremental) first, then new ones
