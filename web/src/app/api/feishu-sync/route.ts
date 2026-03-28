@@ -534,14 +534,14 @@ async function fullSync(userId: string) {
       }
     }
 
-    // 4. Sort chats: already synced (has messages, needs incremental) first, then new ones
-    //    This way incremental syncs (fast) go first, full history (slow) goes last
+    // 5. Sort chats: unsycned first (spread across all groups), then synced (incremental)
+    //    This ensures all groups get their first batch before any group gets its second
     const sortedChats = [...chats].sort((a, b) => {
-      const ta = threadMap.get(a.chat_id)!
-      const tb = threadMap.get(b.chat_id)!
-      const aHas = ta.last_sync_ts !== '0' ? 1 : 0
-      const bHas = tb.last_sync_ts !== '0' ? 1 : 0
-      return bHas - aHas // synced ones first
+      const ta = threadMap.get(a.chat_id)
+      const tb = threadMap.get(b.chat_id)
+      const aSynced = ta && ta.last_sync_ts !== '0' ? 1 : 0
+      const bSynced = tb && tb.last_sync_ts !== '0' ? 1 : 0
+      return aSynced - bSynced // unsynced first
     })
 
     let chatIndex = 0
