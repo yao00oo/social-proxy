@@ -134,14 +134,13 @@ social-proxy/
 │   ├── src/auth.ts             # NextAuth v4（JWT + Google + 自动 upsert user）
 │   ├── src/middleware.ts       # 路由保护（cookie 检查，非 Edge）
 │   └── src/types/next-auth.d.ts # NextAuth 类型扩展
-├── mcp-server/                 # MCP Server（本地 AI 工具连接云数据库）
+├── mcp-server/                 # MCP Server（本地 AI 工具连接 Neon 云数据库）
 │   ├── src/
-│   │   ├── index.ts            # MCP Server 入口
+│   │   ├── index.ts            # MCP Server 入口（7 个工具内联，无后台同步）
 │   │   ├── bin.ts              # CLI 入口（setup / server 分流）
 │   │   ├── cli-setup.ts        # `npx social-proxy-mcp setup` 交互式安装
-│   │   ├── db.ts               # 数据库连接（迁移中：SQLite → Neon）
-│   │   ├── tools/              # MCP 工具函数
-│   │   └── feishu/             # 飞书 API + 同步逻辑
+│   │   ├── db-pg.ts            # Neon PostgreSQL 连接（Drizzle ORM）
+│   │   └── schema.ts           # Drizzle ORM schema（与 web 共享）
 │   └── package.json            # bin: social-proxy-mcp
 ├── relay-worker/               # Cloudflare Worker（relay.botook.ai）
 │   ├── src/index.ts            # OAuth 中继 + 飞书事件队列
@@ -501,11 +500,16 @@ curl -fsSL https://botook.ai/install-ai-connector.sh | bash
 - [x] Web Agent 工具对接 PG：agent.ts 已适配新 schema
 - [x] 模型选择：设置页切换 AI 模型（OpenRouter）
 - [x] AI Connector 安装流程：install-ai-connector.sh + skill + /connect 授权
-- [ ] **MCP Server 迁移到 Neon**：SQLite → Neon PostgreSQL，共享同一份云数据
+- [x] MCP Server 迁移到 Neon：SQLite → Neon，删除所有本地同步代码（-3956 行）
+- [x] 设置页数据源重构：每个 channel 一张卡片 + 添加数据源弹窗
+- [x] 支持同平台多账户（多个 Gmail、多个飞书）
+- [ ] **MCP 补充 send_message 工具**：当前只有查询，缺少发送能力
+- [ ] **MCP 补充 search_docs 工具**：搜索文档内容
+- [ ] **MCP getUserId 改为只读环境变量**：`SELECT id FROM users LIMIT 1` 在多用户下不安全
 - [ ] 飞书 p2p 单聊同步：listChats 不返回单聊，需用搜索 API 发现 chat_id
+- [ ] **send/feishu INSERT 缺 thread_id/channel_id**：会报 NOT NULL 错误
 - [ ] **Markdown 渲染**：小林回复含 Markdown，前端需要渲染
 - [ ] **Draft Card 可靠性**：DeepSeek 的 `<<DRAFT|...|...|...>>` 标记有时被跳过
-- [ ] **send/feishu INSERT 缺 thread_id/channel_id**：会报 NOT NULL 错误
 
 ### 中优先级（数据源）
 - [x] Gmail OAuth 全链路修复（凭证存 channels.credentials）
