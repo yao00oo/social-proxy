@@ -341,6 +341,7 @@ export default function HomePage() {
   useEffect(() => { aiEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [aiMessages])
 
   // ---------- Direct send (real contact chat) ----------
+  // v2: terminal support
   const handleDirectSend = useCallback(async () => {
     if (!directInput.trim() || !selectedName || isAiChat || !selectedContact) return
     const text = directInput.trim()
