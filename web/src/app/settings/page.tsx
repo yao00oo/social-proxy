@@ -435,55 +435,6 @@ function useDocSync() {
 
 // ---------- Channel Data Panel ----------
 
-function ChannelDataPanel({ platform, data, onRefresh }: { platform: string; data: any; onRefresh: () => void }) {
-  const [deleting, setDeleting] = useState(false)
-
-  if (!data) return null
-
-  const handleDelete = async () => {
-    if (!confirm(`确定要删除 ${platform} 的所有数据吗？此操作不可恢复。`)) return
-    setDeleting(true)
-    await fetch(`/api/channel-data?platform=${platform}`, { method: 'DELETE' })
-    setDeleting(false)
-    onRefresh()
-  }
-
-  const handleToggle = async () => {
-    await fetch('/api/channel-data', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ platform, enabled: !data.enabled })
-    })
-    onRefresh()
-  }
-
-  return (
-    <div className="mt-4 pt-4 border-t border-outline-variant/10">
-      <p className="text-[11px] font-bold uppercase tracking-wider text-outline mb-2">数据管理</p>
-      <div className="flex items-center gap-4 text-xs text-on-surface-variant mb-3">
-        <span>{data.threads} 个会话</span>
-        <span>·</span>
-        <span>{data.messages} 条消息</span>
-        {data.last_message_at && (
-          <>
-            <span>·</span>
-            <span>最新消息：{data.last_message_at.slice(0, 16)}</span>
-          </>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <button onClick={handleDelete} disabled={deleting}
-          className="px-3 py-1.5 text-xs rounded-lg text-red-600 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50 cursor-pointer">
-          {deleting ? '删除中...' : '删除数据'}
-        </button>
-        <button onClick={handleToggle}
-          className="px-3 py-1.5 text-xs rounded-lg text-on-surface-variant bg-surface-container-high hover:bg-surface-container-highest transition-colors cursor-pointer">
-          {data.enabled ? '停用' : '启用'}
-        </button>
-      </div>
-    </div>
-  )
-}
 
 // ---------- Main Settings Page ----------
 
@@ -531,9 +482,6 @@ export default function SettingsPage() {
   // Expanded panels
   const [expandedCard, setExpandedCard] = useState<string | null>(null)
 
-  // Channel data management
-  const [channelData, setChannelData] = useState<Record<string, any>>({})
-
   // Terminal
   const [terminalConnected, setTerminalConnected] = useState(false)
   const [terminalName, setTerminalName] = useState<string | null>(null)
@@ -572,15 +520,6 @@ export default function SettingsPage() {
     const data = await fetch('/api/gmail-auth').then(r => r.json())
     setGmailAuthed(data.authed)
     if (data.email) setGmailEmail(data.email)
-  }, [])
-
-  const fetchChannelData = useCallback(async () => {
-    const data = await fetch('/api/channel-data').then(r => r.json()).catch(() => ({ channels: [] }))
-    const map: Record<string, any> = {}
-    for (const ch of data.channels || []) {
-      map[ch.platform] = ch
-    }
-    setChannelData(map)
   }, [])
 
   const loadThreads = async (platform: string, offset: number = 0, append: boolean = false) => {
@@ -642,7 +581,6 @@ export default function SettingsPage() {
     fetchSettings()
     checkFeishuAuth()
     checkGmailAuth()
-    fetchChannelData()
     loadThreads('all')
     // Load available models
     fetch('/api/models').then(r => r.json()).then(data => setAvailableModels(data.models || [])).catch(() => {})
@@ -660,7 +598,7 @@ export default function SettingsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ autoSyncSeconds: 15 }),
     })
-  }, [fetchSettings, checkFeishuAuth, checkGmailAuth, fetchChannelData])
+  }, [fetchSettings, checkFeishuAuth, checkGmailAuth])
 
   // ---------- WeChat Import ----------
 
@@ -1018,7 +956,6 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              <ChannelDataPanel platform="terminal" data={channelData.terminal} onRefresh={fetchChannelData} />
             </div>
           )}
 
@@ -1133,7 +1070,6 @@ export default function SettingsPage() {
                     </p>
                   )}
 
-                  <ChannelDataPanel platform="feishu" data={channelData.feishu} onRefresh={fetchChannelData} />
                 </>
               ) : (
                 /* Not connected: show guided stepper */
@@ -1209,7 +1145,6 @@ export default function SettingsPage() {
                 <p>• agent 会在后台运行，关闭终端后需要重新启动</p>
               </div>
 
-              <ChannelDataPanel platform="imessage" data={channelData.imessage} onRefresh={fetchChannelData} />
             </div>
           )}
         </div>
@@ -1496,7 +1431,8 @@ export default function SettingsPage() {
                 className={`px-3 py-1 text-xs rounded-full transition-colors ${
                   dbPlatform === p ? 'bg-primary text-on-primary' : 'bg-surface-container-high text-on-surface-variant hover:bg-surface-container-highest'
                 }`}>
-                {p === 'all' ? '全部' : p === 'feishu' ? '飞书' : p === 'imessage' ? 'iMessage' : p === 'gmail' ? 'Gmail' : p}
+                {(p === 'all' ? '全部' : p === 'feishu' ? '飞书' : p === 'imessage' ? 'iMessage' : p === 'gmail' ? 'Gmail' : p)}
+                {dbPlatform === p && dbTotal > 0 ? ` (${dbTotal})` : ''}
               </button>
             ))}
             <div className="flex-1" />
@@ -1505,6 +1441,38 @@ export default function SettingsPage() {
               onKeyDown={e => { if (e.key === 'Enter' && dbSearch) { /* search */ } }}
               className="px-3 py-1 text-xs rounded-full bg-surface-container border-none outline-none w-40 placeholder:text-outline/50" />
           </div>
+
+          {/* Platform summary + management */}
+          {dbPlatform !== 'all' && (
+            <div className="flex items-center justify-between py-3 px-1 border-b border-outline-variant/10 mb-3">
+              <div className="flex items-center gap-4 text-xs text-on-surface-variant">
+                <span className="font-medium text-on-surface">
+                  {dbPlatform === 'feishu' ? '飞书' : dbPlatform === 'imessage' ? 'iMessage' : dbPlatform === 'gmail' ? 'Gmail' : dbPlatform}
+                </span>
+                <span>{dbTotal} 个会话</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={async () => {
+                  if (!confirm(`确定要清空 ${dbPlatform} 的所有数据吗？此操作不可恢复。`)) return
+                  await fetch(`/api/channel-data?platform=${dbPlatform}`, { method: 'DELETE' })
+                  loadThreads(dbPlatform)
+                }}
+                  className="px-2.5 py-1 text-[10px] rounded-lg text-red-600 bg-red-50 hover:bg-red-100 transition-colors cursor-pointer">
+                  清空数据
+                </button>
+                <button onClick={async () => {
+                  await fetch('/api/channel-data', {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ platform: dbPlatform, enabled: false })
+                  })
+                }}
+                  className="px-2.5 py-1 text-[10px] rounded-lg text-on-surface-variant bg-surface-container-high hover:bg-surface-container-highest transition-colors cursor-pointer">
+                  停用
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Thread list */}
           <div className="space-y-1 max-h-[400px] overflow-y-auto">
