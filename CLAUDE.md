@@ -134,12 +134,25 @@ social-proxy/
 │   ├── src/auth.ts             # NextAuth v4（JWT + Google + 自动 upsert user）
 │   ├── src/middleware.ts       # 路由保护（cookie 检查，非 Edge）
 │   └── src/types/next-auth.d.ts # NextAuth 类型扩展
-├── mcp-server/                 # MCP Server（本地 Claude Desktop 用）
-│   ├── src/                    # 业务逻辑（工具函数、飞书API、同步）
-│   └── drizzle.config.ts       # Drizzle Kit 配置
+├── mcp-server/                 # MCP Server（本地 AI 工具连接云数据库）
+│   ├── src/
+│   │   ├── index.ts            # MCP Server 入口
+│   │   ├── bin.ts              # CLI 入口（setup / server 分流）
+│   │   ├── cli-setup.ts        # `npx social-proxy-mcp setup` 交互式安装
+│   │   ├── db.ts               # 数据库连接（迁移中：SQLite → Neon）
+│   │   ├── tools/              # MCP 工具函数
+│   │   └── feishu/             # 飞书 API + 同步逻辑
+│   └── package.json            # bin: social-proxy-mcp
 ├── relay-worker/               # Cloudflare Worker（relay.botook.ai）
 │   ├── src/index.ts            # OAuth 中继 + 飞书事件队列
 │   └── wrangler.toml           # Cloudflare 部署配置
+├── web/public/
+│   ├── install-ai-connector.sh # AI 工具数据连接器安装脚本
+│   ├── install-terminal.sh     # Terminal agent 安装脚本
+│   ├── install-imessage.sh     # iMessage 同步安装脚本
+│   └── skill/                  # Agent Skills 标准格式（跨平台）
+│       ├── SKILL.md            # Skill 定义（Claude Code / OpenClaw / Cursor）
+│       └── scripts/setup.sh    # 浏览器授权 + MCP 配置
 ├── CLAUDE.md                   # 本文件
 ├── .gitignore                  # 排除 node_modules/images/.env.local/*.db
 └── .env.example                # 环境变量模板
@@ -347,6 +360,8 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 | `/api/import` | POST | 微信/WhatsApp 聊天记录导入 |
 | `/api/send/feishu` | POST | 通过飞书发消息 |
 | `/api/send/email` | POST | 通过邮件发消息 |
+| `/api/connect` | POST/GET | CLI 授权：POST 生成授权码，GET 用码换 DATABASE_URL |
+| `/api/models` | GET | 可用 AI 模型列表 |
 
 所有 API（除 health/auth）都需要登录，通过 `getUserId()` 获取当前用户 ID。
 `getUserId()` 会自动在 PG 的 users 表创建用户记录（JWT 模式不走 adapter）。
@@ -379,7 +394,7 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 | `sender.sender_type` | string | 发送者类型：`user` / `app` / `anonymous` / `unknown` |
 | `sender.tenant_key` | string | 租户标识 |
 
-**获取发送者姓名的正确方式**：用 `sender.id`（open_id）查 `feishu_users` 表，不要用 `sender.name`（不存在）。
+**获取发送者姓名的正确方式**：用 `sender.id`（open_id）查 `contact_identities.platform_uid`，不要用 `sender.name`（不存在）。同步前用 `buildSenderNameCache()` 构建缓存。
 
 **消息对象完整字段：**
 
@@ -439,6 +454,35 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 
 返回 `items: string[]`（message_id 列表），需要再调 `GET /im/v1/messages/:id` 获取消息详情（含 chat_id）。
 
+## AI Connector（让 AI 工具连上数据）
+
+用户在 Claude Code / OpenClaw / Cursor 等 AI 工具里连接 botook 数据的方式：
+
+**安装方式 1：运行脚本**
+```bash
+curl -fsSL https://botook.ai/install-ai-connector.sh | bash
+```
+脚本下载 skill 文件到 `~/.claude/skills/botook/`（或 `~/.openclaw/skills/botook/`），然后用户说 `/botook setup` 完成授权。
+
+**安装方式 2：发给 AI 一句话**
+```
+帮我安装 botook，按照 https://botook.ai/install 的说明操作。
+```
+
+**授权流程**：
+1. CLI/AI 打开 `botook.ai/connect` → 用户登录并点确认
+2. 页面显示 6 位授权码 → 用户粘贴回 CLI
+3. CLI 调 `GET /api/connect?code=XXXXXX` 换取 DATABASE_URL
+4. 自动配置 MCP（`claude mcp add botook -e DATABASE_URL=... -- npx social-proxy-mcp`）
+
+**文件结构**：
+- `web/public/install-ai-connector.sh` — 安装脚本
+- `web/public/skill/SKILL.md` — Agent Skills 标准格式
+- `web/public/skill/scripts/setup.sh` — 授权 + 配置脚本
+- `web/src/app/install/page.tsx` — AI 可读的安装指南页面（公开）
+- `web/src/app/connect/page.tsx` — 浏览器授权页面（需登录）
+- `web/src/app/api/connect/route.ts` — 授权码 API
+
 ## 注意事项
 
 - **不要加 localhost 或其他域名的 OAuth 回调**：所有 OAuth 回调只用 botook.ai，不要建议用户加任何其他域名
@@ -453,16 +497,21 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 ### 高优先级（核心功能）
 - [x] 统一多平台数据模型（channels/threads/contact_identities 替代 feishu_* 专属表）
 - [x] 飞书发送者姓名：用 open_id 查 contact_identities
-- [ ] **飞书同步适配新模型**：sync adapter 写入 channels → threads → messages
+- [x] 飞书同步适配新模型：sync adapter 写入 channels → threads → messages
+- [x] Web Agent 工具对接 PG：agent.ts 已适配新 schema
+- [x] 模型选择：设置页切换 AI 模型（OpenRouter）
+- [x] AI Connector 安装流程：install-ai-connector.sh + skill + /connect 授权
+- [ ] **MCP Server 迁移到 Neon**：SQLite → Neon PostgreSQL，共享同一份云数据
 - [ ] 飞书 p2p 单聊同步：listChats 不返回单聊，需用搜索 API 发现 chat_id
-- [ ] **Web Agent 工具对接 PG**：当前 agent.ts 的 tools 还是查 SQLite，需要改成查 PG
 - [ ] **Markdown 渲染**：小林回复含 Markdown，前端需要渲染
 - [ ] **Draft Card 可靠性**：DeepSeek 的 `<<DRAFT|...|...|...>>` 标记有时被跳过
+- [ ] **send/feishu INSERT 缺 thread_id/channel_id**：会报 NOT NULL 错误
 
 ### 中优先级（数据源）
-- [ ] Gmail 同步：适配新模型（channel + threads + messages）
-- [ ] IMAP 邮件同步：同上
-- [ ] 微信导入：解析聊天记录文件 → 写入新模型
+- [x] Gmail OAuth 全链路修复（凭证存 channels.credentials）
+- [ ] Gmail 同步测试验证
+- [ ] IMAP 邮件同步
+- [ ] 微信导入适配新模型
 - [ ] 飞书文档同步：写入 documents 表
 - [ ] **通用导入**：任意 IM 的聊天记录文本导入（custom channel）
 
@@ -471,8 +520,8 @@ FEISHU_APP_SECRET     # 飞书应用（可选）
 - [ ] 移动端适配
 - [ ] 搜索联动（人名 + 消息内容）
 - [ ] 聊天记录分页（上滑加载）
-- [ ] 模型选择（settings 页切换 AI 模型）
 - [ ] 时间字段统一为 timestamptz
+- [ ] ClawHub 发布 botook skill
 
 <!-- VERCEL BEST PRACTICES START -->
 ## Vercel 开发最佳实践
