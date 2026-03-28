@@ -66,12 +66,12 @@ fi
 EOF
 chmod +x "$BIN_DIR/socialproxy-terminal"
 
-# 加到 PATH
-SHELL_RC="$HOME/.zshrc"
-[ "$(basename "$SHELL")" = "bash" ] && SHELL_RC="$HOME/.bashrc"
-if ! grep -q "socialproxy" "$SHELL_RC" 2>/dev/null; then
-  printf '\n# Social Proxy Terminal\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$SHELL_RC"
-fi
+# 加到 PATH（同时写 .zshrc 和 .bashrc，覆盖 macOS 两种 shell）
+for rc in "$HOME/.zshrc" "$HOME/.bashrc"; do
+  if ! grep -q "socialproxy" "$rc" 2>/dev/null; then
+    printf '\n# Social Proxy Terminal\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$rc"
+  fi
+done
 export PATH="$BIN_DIR:$PATH"
 
 echo ""

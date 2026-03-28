@@ -69,21 +69,15 @@ async function handleStart() {
     config = await registerTerminal(auth.token)
     success(`终端：${config.name}`)
   } else {
+    // 每次启动都重新注册，确保拿到最新 thread_id
+    config = await registerTerminal(config.token)
     success(`${config.email} | ${config.name}`)
   }
 
-  // 检查 daemon 是否已在运行
-  const { running, pid } = isDaemonRunning()
+  // 如果 daemon 已在运行，先停掉再重启（确保用最新 config）
+  const { running } = isDaemonRunning()
   if (running) {
-    success(`daemon 已在运行 (PID ${pid})`)
-    console.log('')
-    dim('终端已连接，你可以正常使用终端。')
-    dim('Web 端发来的命令会自动执行。')
-    console.log('')
-    dim(`发消息: socialproxy-terminal send "内容"`)
-    dim(`状  态: socialproxy-terminal status`)
-    dim(`停  止: socialproxy-terminal stop`)
-    return
+    stopDaemon()
   }
 
   // 启动 daemon
