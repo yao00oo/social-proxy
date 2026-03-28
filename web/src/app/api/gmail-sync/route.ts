@@ -195,8 +195,7 @@ export async function POST() {
         try {
           const msg = await fetchMessage(token, msgIds[i])
           const ts = parseInt(msg.internalDate)
-          const _d = new Date(ts), _p = (n: number) => String(n).padStart(2, '0')
-          const timestamp = `${_d.getFullYear()}-${_p(_d.getMonth() + 1)}-${_p(_d.getDate())} ${_p(_d.getHours())}:${_p(_d.getMinutes())}:${_p(_d.getSeconds())}`
+          const timestamp = new Date(ts).toISOString()
           const subject = getHeader(msg, 'Subject') || '(无主题)'
           const from = parseAddress(getHeader(msg, 'From'))
           const to = parseAddress(getHeader(msg, 'To'))

@@ -28,10 +28,11 @@ export async function POST(req: NextRequest) {
 
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
 
-  // 方向以用户视角为准：
-  // from=web（默认）→ 用户发给终端 → direction='sent'
-  // from=terminal → 终端回复用户 → direction='received'
-  const direction = from === 'terminal' ? 'received' : 'sent'
+  // 方向以终端视角存储（daemon 依赖此约定）：
+  // from=web（默认）→ 终端收到命令 → direction='received'
+  // from=terminal → 终端发出结果 → direction='sent'
+  // Web UI 渲染时会翻转方向
+  const direction = from === 'terminal' ? 'sent' : 'received'
   const senderName = from === 'terminal' ? thread.name : '我'
 
   await exec(

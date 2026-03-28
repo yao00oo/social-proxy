@@ -19,12 +19,18 @@ export async function POST() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const clientIdRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='gmail_client_id'`)
+  const clientIdRow = await queryOne<{ value: string }>(
+    "SELECT value FROM settings WHERE key = 'gmail_client_id' AND user_id = ?", [userId]
+  )
   const clientId = clientIdRow?.value
   if (!clientId) return NextResponse.json({ error: '请先填写 Gmail Client ID' }, { status: 400 })
 
   const state = crypto.randomBytes(16).toString('hex')
-  await exec(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, ['gmail_oauth_state', state])
+  await exec(
+    `INSERT INTO settings(user_id, key, value) VALUES(?, 'gmail_oauth_state', ?)
+     ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
+    [userId, state]
+  )
 
   const params = new URLSearchParams({
     client_id: clientId,
@@ -40,12 +46,18 @@ export async function POST() {
   return NextResponse.json({ authUrl })
 }
 
-// GET — 查询授权状态
+// GET — 查询授权状态（从 channels 表读）
 export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const tokenRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='gmail_access_token'`)
-  const emailRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key='gmail_email'`)
-  return NextResponse.json({ authed: !!tokenRow?.value, email: emailRow?.value || '' })
+  const channel = await queryOne<{ credentials: any }>(
+    "SELECT credentials FROM channels WHERE user_id = ? AND platform = 'gmail'",
+    [userId]
+  )
+  const creds = channel?.credentials || {}
+  return NextResponse.json({
+    authed: !!creds.access_token,
+    email: creds.email || '',
+  })
 }

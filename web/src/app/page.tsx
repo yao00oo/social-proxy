@@ -363,8 +363,10 @@ export default function HomePage() {
     }
 
     // Optimistic: add to messages immediately
+    // 终端消息在 DB 中以终端视角存储，optimistic 也用相同约定（received=终端收到=用户发的）
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    setRealMessages(prev => [...prev, { direction: 'sent', content: text, timestamp: now }])
+    const optDir = selectedContact.platform === 'terminal' ? 'received' : 'sent'
+    setRealMessages(prev => [...prev, { direction: optDir as 'sent' | 'received', content: text, timestamp: now }])
 
     try {
       const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -632,9 +634,13 @@ export default function HomePage() {
               ) : realMessages.length === 0 ? (
                 <div className="flex items-center justify-center py-12 text-outline text-sm">暂无聊天记录</div>
               ) : (
-                realMessages.map((m, i) => (
-                  <HistoryBubble key={i} content={m.content} time={timeStr(m.timestamp)} direction={m.direction} contactName={selectedName!} senderName={m.sender_name} />
-                ))
+                realMessages.map((m, i) => {
+                  // 终端消息在 DB 中以终端视角存储（received=终端收到的命令=用户发的），渲染时翻转
+                  const dir: 'sent' | 'received' = selectedContact?.platform === 'terminal'
+                    ? (m.direction === 'received' ? 'sent' : 'received')
+                    : m.direction
+                  return <HistoryBubble key={i} content={m.content} time={timeStr(m.timestamp)} direction={dir} contactName={selectedName!} senderName={m.sender_name} />
+                })
               )}
               <div ref={messagesEndRef} />
             </div>

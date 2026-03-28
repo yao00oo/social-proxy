@@ -1,9 +1,9 @@
 // POST /api/send/email — 发送邮件（统一多平台模型）
 import { NextRequest, NextResponse } from 'next/server'
 import nodemailer from 'nodemailer'
-import { queryOne, exec } from '@/lib/db'
-import { getSetting } from '@/lib/feishu'
+import { query, queryOne, exec } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
+import { getOrCreateChannel, getOrCreateThread, insertUnifiedMessage, updateContactStats } from '@/lib/sync-helpers'
 
 export async function POST(req: NextRequest) {
   const userId = await getUserId()
@@ -16,20 +16,20 @@ export async function POST(req: NextRequest) {
   }
 
   // Look up contact
-  const contact = await queryOne<{ name: string }>(
-    'SELECT name FROM contacts WHERE name = ? AND user_id = ?', [contact_name, userId]
+  const contact = await queryOne<{ id: number; name: string }>(
+    'SELECT id, name FROM contacts WHERE name = ? AND user_id = ?', [contact_name, userId]
   )
-
   if (!contact) {
     return NextResponse.json({ success: false, message: `联系人"${contact_name}"不存在` }, { status: 404 })
   }
 
-  // Get email from contact_identities
+  // Get email from contact_identities（优先 gmail channel 的）
   const emailRow = await queryOne<{ email: string }>(
     `SELECT ci.email
      FROM contact_identities ci
      JOIN contacts c ON ci.contact_id = c.id
      WHERE c.name = ? AND c.user_id = ? AND ci.email IS NOT NULL AND ci.email != ''
+     ORDER BY ci.id ASC
      LIMIT 1`,
     [contact_name, userId]
   )
@@ -42,8 +42,10 @@ export async function POST(req: NextRequest) {
   const emailSubject = subject || body.slice(0, 30).replace(/\n/g, ' ') + (body.length > 30 ? '...' : '')
 
   // Check permission mode
-  const mode = await getSetting('permission_mode') || 'suggest'
-  if (mode === 'suggest') {
+  const modeRow = await queryOne<{ value: string }>(
+    "SELECT value FROM settings WHERE key = 'permission_mode' AND user_id = ?", [userId]
+  )
+  if ((modeRow?.value || 'suggest') === 'suggest') {
     return NextResponse.json({
       success: true,
       mode: 'suggest',
@@ -53,6 +55,13 @@ export async function POST(req: NextRequest) {
   }
 
   // Send via SMTP
+  const getSetting = async (key: string) => {
+    const row = await queryOne<{ value: string }>(
+      'SELECT value FROM settings WHERE key = ? AND user_id = ?', [key, userId]
+    )
+    return row?.value || ''
+  }
+
   const smtpHost = await getSetting('smtp_host')
   const smtpUser = await getSetting('smtp_user')
   if (!smtpHost || !smtpUser) {
@@ -77,36 +86,22 @@ export async function POST(req: NextRequest) {
       text: body,
     })
 
-    // Record in messages table — find thread for this contact
-    const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
-    const thread = await queryOne<{ id: number; channel_id: number }>(
-      `SELECT t.id, t.channel_id
-       FROM threads t
-       JOIN channels ch ON t.channel_id = ch.id
-       WHERE ch.platform = 'gmail' AND t.name = ? AND t.user_id = ?
-       LIMIT 1`,
-      [contact_name, userId]
-    )
+    // Record sent message — find or create thread
+    const now = new Date().toISOString()
+    const channel = await getOrCreateChannel(userId, 'gmail', 'Gmail')
+    const thread = await getOrCreateThread(userId, channel.id, `email:${email}`, contact_name, 'email_thread')
 
-    const msgContent = `[邮件] 主题: ${emailSubject}\n\n${body}`
-    if (thread) {
-      await exec(
-        `INSERT INTO messages(user_id, thread_id, channel_id, direction, content, timestamp, msg_type)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [userId, thread.id, thread.channel_id, 'sent', msgContent, now, 'email']
-      )
-    } else {
-      await exec(
-        `INSERT INTO messages(user_id, direction, content, timestamp, msg_type)
-         VALUES (?, ?, ?, ?, ?)`,
-        [userId, 'sent', msgContent, now, 'email']
-      )
-    }
+    await insertUnifiedMessage(userId, thread.id, channel.id, {
+      direction: 'sent',
+      senderName: '我',
+      content: `[邮件] 主题: ${emailSubject}\n\n${body}`,
+      msgType: 'email',
+      timestamp: now,
+      platformMsgId: `sent:${Date.now()}`,
+      metadata: { subject: emailSubject, to: email },
+    })
 
-    await exec(
-      'UPDATE contacts SET last_contact_at = ?, message_count = message_count + 1 WHERE name = ? AND user_id = ?',
-      [now, contact_name, userId]
-    )
+    await updateContactStats(userId, contact_name, now)
 
     return NextResponse.json({
       success: true,

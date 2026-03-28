@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 验证 thread 属于该用户
-  // 查新消息（direction='sent' 表示用户从 Web 端发给终端的命令）
+  // 查新消息（direction='received' = 终端收到的命令，即用户从 Web 发给终端的）
   const messages = await query<{
     id: number
     content: string
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   }>(
     `SELECT id, content, sender_name, direction, timestamp, msg_type, metadata
      FROM messages
-     WHERE user_id = ? AND thread_id = ? AND id > ? AND direction = 'sent'
+     WHERE user_id = ? AND thread_id = ? AND id > ? AND direction = 'received'
      ORDER BY id ASC LIMIT 50`,
     [userId, threadId, afterId]
   )
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
     }>(
       `SELECT id, content, sender_name, direction, timestamp, msg_type, metadata
        FROM messages
-       WHERE user_id = ? AND thread_id = ? AND id > ? AND direction = 'sent'
+       WHERE user_id = ? AND thread_id = ? AND id > ?
        ORDER BY id ASC LIMIT 50`,
       [userId, threadId, afterId]
     )
