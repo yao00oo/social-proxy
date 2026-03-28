@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
   }>(
     `SELECT id, content, sender_name, direction, timestamp, msg_type, metadata
      FROM messages
-     WHERE user_id = ? AND thread_id = ? AND id > ?
+     WHERE user_id = ? AND thread_id = ? AND id > ? AND direction = 'received'
      ORDER BY id ASC LIMIT 50`,
     [userId, threadId, afterId]
   )
