@@ -36,7 +36,7 @@ if [ ! -d "$INSTALL_DIR/node_modules" ]; then
     git clone --depth 1 https://github.com/yao00oo/social-proxy.git social-proxy-tmp 2>/dev/null
     cp -r social-proxy-tmp/botook-agent/* "$INSTALL_DIR/"
     rm -rf social-proxy-tmp
-    cd "$INSTALL_DIR" && npm install --production --silent 2>/dev/null
+    cd "$INSTALL_DIR" && npm install --silent 2>/dev/null
   }
 fi
 

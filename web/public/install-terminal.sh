@@ -48,9 +48,9 @@ curl -fsSL "$REPO/package.json" -o "$BIN_DIR/package.json"
 cd "$BIN_DIR"
 echo "  安装依赖..."
 if command -v node >/dev/null 2>&1; then
-  npm install --production 2>&1 | tail -3
+  npm install 2>&1 | tail -3
 elif command -v bun >/dev/null 2>&1; then
-  bun install --production 2>&1 | tail -3
+  bun install 2>&1 | tail -3
 fi
 
 # 创建启动脚本
