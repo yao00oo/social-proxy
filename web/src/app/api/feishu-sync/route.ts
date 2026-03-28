@@ -285,59 +285,84 @@ async function listMessages(
 }
 
 // ── Discover p2p chats via search API ──
+// 两种策略：1) 关键词搜索覆盖大部分 2) from_ids 按同事搜覆盖纯图片/表情对话
 async function discoverP2pChats(
   userToken: string,
   channelId: number,
   userId: string,
   knownChatIds: Set<string>,
+  senderNameCache: Map<string, string>,
+  timeLimit: number, // 剩余可用时间（ms）
 ): Promise<Array<{ chat_id: string; name: string }>> {
   const discovered: Array<{ chat_id: string; name: string }> = []
   const foundChatIds = new Set<string>()
+  const startTime = Date.now()
 
-  // 用多个关键词搜 p2p 消息，覆盖更多会话
-  const keywords = ['好', '的', '了', '嗯', 'ok', '是', '谢', '收到', '1', '哈']
-
-  for (const kw of keywords) {
+  // 搜索 API POST helper
+  async function searchP2p(body: any): Promise<string[]> {
     try {
-      const body = JSON.stringify({ query: kw, chat_type: 'p2p_chat' })
+      const bodyStr = JSON.stringify(body)
       const res = await new Promise<any>((resolve, reject) => {
         const https = require('https')
         const req = https.request('https://open.feishu.cn/open-apis/search/v2/message?page_size=50&user_id_type=open_id', {
           method: 'POST',
-          headers: { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+          headers: { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
         }, (res: any) => {
           let d = ''
           res.on('data', (c: any) => d += c)
           res.on('end', () => { try { resolve(JSON.parse(d)) } catch { reject(new Error('parse error')) } })
         })
         req.on('error', reject)
-        req.write(body)
+        req.write(bodyStr)
         req.end()
       })
+      return res.code === 0 ? (res.data?.items || []) : []
+    } catch { return [] }
+  }
 
-      if (res.code !== 0 || !res.data?.items?.length) continue
+  // 从 message_id 提取 chat_id 并确认是 p2p
+  async function extractP2pChatId(msgId: string): Promise<{ chat_id: string; name: string } | null> {
+    try {
+      const msgRes = await feishuGet(`/im/v1/messages/${msgId}`, userToken, {})
+      if (msgRes.code !== 0 || !msgRes.data?.items?.[0]) return null
+      const chatId = msgRes.data.items[0].chat_id
+      if (!chatId || knownChatIds.has(chatId) || foundChatIds.has(chatId)) return null
+      foundChatIds.add(chatId)
+      // 确认是 p2p
+      const chatRes = await feishuGet(`/im/v1/chats/${chatId}`, userToken, {})
+      if (chatRes.code !== 0 || chatRes.data?.chat_mode !== 'p2p') return null
+      return { chat_id: chatId, name: chatRes.data?.name || chatId }
+    } catch { return null }
+  }
 
-      // 从搜索结果中提取 chat_id
-      for (const msgId of res.data.items.slice(0, 5)) { // 每个关键词只查 5 条的详情
-        try {
-          const msgRes = await feishuGet(`/im/v1/messages/${msgId}`, userToken, {})
-          if (msgRes.code === 0 && msgRes.data?.items?.[0]) {
-            const chatId = msgRes.data.items[0].chat_id
-            if (chatId && !knownChatIds.has(chatId) && !foundChatIds.has(chatId)) {
-              foundChatIds.add(chatId)
-              // 查 chat 详情确认是 p2p
-              const chatRes = await feishuGet(`/im/v1/chats/${chatId}`, userToken, {})
-              if (chatRes.code === 0 && chatRes.data?.chat_mode === 'p2p') {
-                const name = chatRes.data?.name || chatId
-                discovered.push({ chat_id: chatId, name })
-              }
-            }
-          }
-        } catch { /* skip */ }
-        await new Promise(r => setTimeout(r, 300))
+  // 策略 1：关键词搜索（快速覆盖大部分）
+  const keywords = ['好', '的', '了', '嗯', 'ok', '是', '谢', '收到']
+  for (const kw of keywords) {
+    if (Date.now() - startTime > timeLimit) break
+    const msgIds = await searchP2p({ query: kw, chat_type: 'p2p_chat' })
+    for (const msgId of msgIds.slice(0, 3)) {
+      if (Date.now() - startTime > timeLimit) break
+      const result = await extractP2pChatId(msgId)
+      if (result) discovered.push(result)
+      await new Promise(r => setTimeout(r, 200))
+    }
+    await new Promise(r => setTimeout(r, 300))
+  }
+
+  // 策略 2：按同事 from_ids 搜索（覆盖纯图片/表情的对话）
+  const colleagueIds = [...senderNameCache.keys()].filter(id => id.startsWith('ou_'))
+  for (const openId of colleagueIds) {
+    if (Date.now() - startTime > timeLimit) break
+    const msgIds = await searchP2p({ query: '好', chat_type: 'p2p_chat', from_ids: [openId] })
+    if (msgIds.length > 0) {
+      const result = await extractP2pChatId(msgIds[0])
+      if (result) {
+        // 用真名替换
+        result.name = senderNameCache.get(openId) || result.name
+        discovered.push(result)
       }
-    } catch { /* skip keyword */ }
-    await new Promise(r => setTimeout(r, 500))
+    }
+    await new Promise(r => setTimeout(r, 300))
   }
 
   return discovered
@@ -469,31 +494,33 @@ async function fullSync(userId: string) {
     // 1. Build sender name cache from contact_identities
     const senderNameCache = await buildSenderNameCache(userId, channelId)
 
-    // 2. List all chats (group only — listChats doesn't return p2p)
+    // 2. Load existing threads from DB
+    const existingThreads = await query<{ id: number; platform_thread_id: string; last_sync_ts: string }>(
+      'SELECT id, platform_thread_id, last_sync_ts FROM threads WHERE user_id = ? AND channel_id = ?',
+      [userId, channelId],
+    )
+
+    // 3. List all chats (group only — listChats doesn't return p2p)
     log('获取会话列表...')
     const chats = await listChats(userToken)
 
-    // 2.5. Discover p2p chats via search API (listChats 不返回私聊)
-    if (Date.now() - startTime < 30000) {
+    // 4. Discover p2p chats via search API (listChats 不返回私聊)
+    const timeLeft = TIMEOUT_MS - (Date.now() - startTime)
+    if (timeLeft > 15000) {
       log('搜索私聊...')
       const knownIds = new Set(chats.map(c => c.chat_id))
-      const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds)
+      for (const t of existingThreads) knownIds.add(t.platform_thread_id)
+      const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds, senderNameCache, Math.min(timeLeft - 15000, 20000))
       if (p2pChats.length > 0) {
         for (const p of p2pChats) {
           chats.push({ chat_id: p.chat_id, name: p.name, chat_type: 'p2p' })
         }
-        log(`发现 ${p2pChats.length} 个私聊`)
+        log(`发现 ${p2pChats.length} 个新私聊`)
       }
     }
 
     result.chats = chats.length
     log(`共 ${chats.length} 个会话`)
-
-    // 3. Load existing threads from DB (one query instead of N)
-    const existingThreads = await query<{ id: number; platform_thread_id: string; last_sync_ts: string }>(
-      'SELECT id, platform_thread_id, last_sync_ts FROM threads WHERE user_id = ? AND channel_id = ?',
-      [userId, channelId],
-    )
     const threadMap = new Map<string, { id: number; last_sync_ts: string }>()
     for (const t of existingThreads) {
       threadMap.set(t.platform_thread_id, { id: t.id, last_sync_ts: t.last_sync_ts })
