@@ -459,6 +459,11 @@ export default function SettingsPage() {
   const [feishuCredSaving, setFeishuCredSaving] = useState(false)
   const [feishuCredSaved, setFeishuCredSaved] = useState(false)
 
+  // AI Model
+  const [availableModels, setAvailableModels] = useState<Array<{ id: string; name: string; description: string }>>([])
+  const [selectedModel, setSelectedModel] = useState('')
+  const [modelSaving, setModelSaving] = useState(false)
+
   // Gmail OAuth
   const [gmailAuthed, setGmailAuthed] = useState(false)
   const [gmailEmail, setGmailEmail] = useState('')
@@ -535,6 +540,12 @@ export default function SettingsPage() {
     fetchSettings()
     checkFeishuAuth()
     checkGmailAuth()
+    // Load available models
+    fetch('/api/models').then(r => r.json()).then(data => setAvailableModels(data.models || [])).catch(() => {})
+    // Load current model selection
+    fetch('/api/settings').then(r => r.json()).then(data => {
+      if (data.settings?.agent_model) setSelectedModel(data.settings.agent_model)
+    }).catch(() => {})
     // Check terminal connection
     fetch('/api/contacts?limit=500').then(r => r.json()).then(data => {
       const term = (data.contacts || []).find((c: any) => c.platform === 'terminal')
@@ -755,6 +766,40 @@ export default function SettingsPage() {
                 <span className={`text-xs ${i < connectedSources ? 'text-primary' : 'text-outline'}`}>{step}</span>
               </div>
             ))}
+          </div>
+        </div>
+
+        {/* Section 0: AI 模型选择 */}
+        <div className="mb-8">
+          <SectionHeader icon="smart_toy" title="小林的大脑" />
+          <div className="bg-white rounded-2xl p-5 ambient-shadow ghost-border">
+            <p className="text-sm text-outline mb-3">选择小林使用的 AI 模型（通过 OpenRouter）</p>
+            <div className="grid grid-cols-2 gap-2">
+              {availableModels.map(m => (
+                <button
+                  key={m.id}
+                  onClick={async () => {
+                    setSelectedModel(m.id)
+                    setModelSaving(true)
+                    await fetch('/api/settings', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ agent_model: m.id }),
+                    })
+                    setModelSaving(false)
+                  }}
+                  className={`p-3 rounded-xl text-left transition-all ${
+                    selectedModel === m.id || (!selectedModel && m.id === 'deepseek/deepseek-chat-v3-0324')
+                      ? 'bg-primary/10 border-2 border-primary'
+                      : 'bg-surface-container-highest/50 border-2 border-transparent hover:border-outline/20'
+                  }`}
+                >
+                  <div className="text-sm font-medium text-on-surface">{m.name}</div>
+                  <div className="text-xs text-outline mt-0.5">{m.description}</div>
+                </button>
+              ))}
+            </div>
+            {modelSaving && <p className="text-xs text-primary mt-2">保存中...</p>}
           </div>
         </div>
 

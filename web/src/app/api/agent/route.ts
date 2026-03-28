@@ -2,12 +2,20 @@
 import { NextRequest } from 'next/server'
 import { runAgent } from '@/lib/agent'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
+import { queryOne } from '@/lib/db'
 
 export async function POST(req: NextRequest) {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
   const body = await req.json()
+
+  // 读用户选择的模型
+  const modelSetting = await queryOne<{ value: string }>(
+    "SELECT value FROM settings WHERE user_id = ? AND key = 'agent_model'",
+    [userId],
+  )
+  const modelId = modelSetting?.value || undefined
 
   let messages = body.messages
   if (Array.isArray(messages)) {
@@ -24,7 +32,7 @@ export async function POST(req: NextRequest) {
     return new Response('No messages', { status: 400 })
   }
 
-  const result = runAgent(userId, messages)
+  const result = runAgent(userId, messages, modelId)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({

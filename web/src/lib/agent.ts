@@ -6,7 +6,17 @@ import { query, queryOne, exec } from './db'
 // feishu imports removed — settings read inline with userId filter
 
 const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY || '' })
-const MODEL = process.env.AGENT_MODEL || 'deepseek/deepseek-chat-v3-0324'
+const DEFAULT_MODEL = 'deepseek/deepseek-chat-v3-0324'
+
+export const AVAILABLE_MODELS = [
+  { id: 'deepseek/deepseek-chat-v3-0324', name: 'DeepSeek V3 (推荐)', description: '性价比最高' },
+  { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', description: '高质量对话' },
+  { id: 'anthropic/claude-haiku-4', name: 'Claude Haiku 4', description: '快速响应' },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: '快速便宜' },
+  { id: 'openai/gpt-4o', name: 'GPT-4o', description: '综合能力强' },
+  { id: 'google/gemini-2.5-flash-preview', name: 'Gemini 2.5 Flash', description: '快速' },
+  { id: 'google/gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro', description: '高质量' },
+]
 
 const SYSTEM_PROMPT = `你是"小林"，用户的私人社交助理。
 
@@ -326,14 +336,149 @@ function createTools(userId: string): Record<string, any> {
     },
   },
 
+  send_message: {
+    description: '给联系人发送消息。默认先返回草稿让用户确认，用户说"发吧/确认/发送"后再真正发送。自动选择发送渠道（飞书/邮件）。',
+    parameters: z.object({
+      contact_name: z.string().describe('联系人姓名'),
+      content: z.string().describe('消息内容'),
+      confirm: z.boolean().optional().describe('是否确认发送。首次调用不传或传false，用户确认后传true'),
+    }),
+    execute: async ({ contact_name, content, confirm }: { contact_name: string; content: string; confirm?: boolean }) => {
+      // Find contact and available channels
+      const contact = await queryOne<{ id: number; name: string }>(
+        `SELECT id, name FROM contacts WHERE name LIKE '%' || ? || '%' AND user_id = ? ORDER BY length(name) ASC LIMIT 1`,
+        [contact_name, userId]
+      )
+      if (!contact) return { success: false, mode: 'error', message: `找不到联系人"${contact_name}"` }
+
+      // Find available send channels for this contact
+      const feishuIdentity = await queryOne<{ platform_uid: string; channel_id: number }>(
+        `SELECT ci.platform_uid, ci.channel_id FROM contact_identities ci
+         JOIN channels ch ON ci.channel_id = ch.id
+         WHERE ci.contact_id = ? AND ch.platform = 'feishu' LIMIT 1`,
+        [contact.id]
+      )
+      const emailIdentity = await queryOne<{ email: string }>(
+        `SELECT email FROM contact_identities WHERE contact_id = ? AND email IS NOT NULL AND email != '' LIMIT 1`,
+        [contact.id]
+      )
+
+      const channels: string[] = []
+      if (feishuIdentity) channels.push('飞书')
+      if (emailIdentity) channels.push('邮件')
+      if (channels.length === 0) {
+        // Check if there's a thread we can match
+        const thread = await queryOne<{ id: number; name: string; channel_id: number }>(
+          `SELECT t.id, t.name, t.channel_id FROM threads t
+           JOIN channels ch ON t.channel_id = ch.id
+           WHERE t.name LIKE '%' || ? || '%' AND t.user_id = ? AND ch.platform = 'feishu'
+           ORDER BY length(t.name) ASC LIMIT 1`,
+          [contact_name, userId]
+        )
+        if (thread) channels.push('飞书')
+      }
+      if (channels.length === 0) return { success: false, mode: 'error', message: `"${contact.name}"没有可用的发送渠道（飞书/邮箱）` }
+
+      const channelStr = channels.join('/')
+
+      // Draft mode (default): return draft for user confirmation
+      if (!confirm) {
+        return {
+          success: true,
+          mode: 'draft',
+          message: `📨 草稿：\n发给：${contact.name}（${channelStr}）\n内容：${content}\n\n请确认是否发送？`,
+          draft: { to: contact.name, content, channels }
+        }
+      }
+
+      // Confirmed: actually send
+      // Try feishu first
+      if (feishuIdentity || channels.includes('飞书')) {
+        try {
+          const tokenRow = await queryOne<{ value: string }>(
+            `SELECT value FROM settings WHERE key = 'feishu_user_access_token' AND user_id = ?`, [userId]
+          )
+          const appId = process.env.FEISHU_APP_ID || (await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key = 'feishu_app_id' AND user_id = ?`, [userId]))?.value
+          const appSecret = process.env.FEISHU_APP_SECRET || (await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key = 'feishu_app_secret' AND user_id = ?`, [userId]))?.value
+
+          if (appId && appSecret) {
+            // Get app token
+            const https = require('https')
+            const appTokenRes: any = await new Promise((resolve, reject) => {
+              const body = JSON.stringify({ app_id: appId, app_secret: appSecret })
+              const req = https.request('https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+              }, (res: any) => { let d = ''; res.on('data', (c: any) => d += c); res.on('end', () => resolve(JSON.parse(d))) })
+              req.on('error', reject); req.write(body); req.end()
+            })
+
+            if (appTokenRes.app_access_token) {
+              // Find receive_id
+              let receiveId = feishuIdentity?.platform_uid
+              let receiveIdType = 'open_id'
+              if (!receiveId) {
+                const thread = await queryOne<{ platform_thread_id: string }>(
+                  `SELECT t.platform_thread_id FROM threads t JOIN channels ch ON t.channel_id = ch.id
+                   WHERE t.name LIKE '%' || ? || '%' AND t.user_id = ? AND ch.platform = 'feishu' LIMIT 1`,
+                  [contact_name, userId]
+                )
+                if (thread) { receiveId = thread.platform_thread_id; receiveIdType = 'chat_id' }
+              }
+
+              if (receiveId) {
+                const sendBody = JSON.stringify({ receive_id: receiveId, msg_type: 'text', content: JSON.stringify({ text: content }) })
+                const sendRes: any = await new Promise((resolve, reject) => {
+                  const req = https.request(`https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=${receiveIdType}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(sendBody), Authorization: `Bearer ${appTokenRes.app_access_token}` }
+                  }, (res: any) => { let d = ''; res.on('data', (c: any) => d += c); res.on('end', () => resolve(JSON.parse(d))) })
+                  req.on('error', reject); req.write(sendBody); req.end()
+                })
+
+                if (sendRes.code === 0) {
+                  return { success: true, mode: 'sent', message: `✅ 飞书消息已发送给 ${contact.name}` }
+                } else {
+                  return { success: false, mode: 'error', message: `发送失败: ${sendRes.msg}` }
+                }
+              }
+            }
+          }
+        } catch (e: any) {
+          return { success: false, mode: 'error', message: `飞书发送失败: ${e.message}` }
+        }
+      }
+
+      return { success: false, mode: 'error', message: '暂时无法发送，请稍后重试' }
+    },
+  },
+
+  search_docs: {
+    description: '搜索文档内容。在飞书文档、本地文件等中按关键词搜索。',
+    parameters: z.object({
+      keyword: z.string().describe('搜索关键词'),
+      limit: z.number().optional().describe('返回条数，默认10'),
+    }),
+    execute: async ({ keyword, limit }: { keyword: string; limit?: number }) => {
+      const lim = Math.min(limit ?? 10, 30)
+      const rows = await query(
+        `SELECT d.title, d.doc_type, d.url, substring(d.content, 1, 200) as preview
+         FROM documents d
+         WHERE d.user_id = ? AND (d.title LIKE ? OR d.content LIKE ?)
+         ORDER BY d.title ASC LIMIT ?`,
+        [userId, `%${keyword}%`, `%${keyword}%`, lim]
+      )
+      return { count: rows.length, documents: rows }
+    },
+  },
+
   }
 }
 
 // Agent entry point
-export function runAgent(userId: string, messages: Array<{ role: string; content: string }>) {
+export function runAgent(userId: string, messages: Array<{ role: string; content: string }>, modelId?: string) {
   const tools = createTools(userId)
+  const model = modelId || process.env.AGENT_MODEL || DEFAULT_MODEL
   return streamText({
-    model: openrouter(MODEL),
+    model: openrouter(model),
     system: SYSTEM_PROMPT,
     messages: messages as any,
     tools,
