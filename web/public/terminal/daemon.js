@@ -113,6 +113,7 @@ async function pollLoop(config) {
                     await (0, http_1.httpPost)('/api/terminal/send', {
                         thread_id: config.threadId,
                         content: truncated,
+                        from: 'terminal',
                     }, config.token);
                 }
             }

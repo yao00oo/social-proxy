@@ -10,9 +10,11 @@ interface Contact {
   name: string
   avatar: string | null
   tags: string[] | null
+  platform: string | null // feishu | gmail | terminal | webhook | custom
   last_contact_at: string | null
   message_count: number
   days_since_last_contact: number
+  thread_id?: number
 }
 
 interface Message {
@@ -344,8 +346,20 @@ export default function HomePage() {
     const text = directInput.trim()
     setDirectInput('')
 
-    const endpoint = '/api/send/feishu'
-    const payload = { contact_name: selectedName, content: text }
+    // 根据 platform 选择发送方式
+    let endpoint: string
+    let payload: any
+
+    if (selectedContact.platform === 'terminal') {
+      endpoint = '/api/terminal/send'
+      payload = { thread_id: selectedContact.thread_id, content: text }
+    } else if (selectedContact.platform === 'gmail') {
+      endpoint = '/api/send/email'
+      payload = { contact_name: selectedName, body: text }
+    } else {
+      endpoint = '/api/send/feishu'
+      payload = { contact_name: selectedName, content: text }
+    }
 
     // Optimistic: add to messages immediately
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')

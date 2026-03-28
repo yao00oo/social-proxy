@@ -88,6 +88,7 @@ async function pollLoop(config: TerminalConfig) {
           await httpPost('/api/terminal/send', {
             thread_id: config.threadId,
             content: truncated,
+            from: 'terminal',
           }, config.token)
         }
       }

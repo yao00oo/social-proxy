@@ -70,6 +70,7 @@ async function sendMessage(token, threadId, content) {
         const { status } = await (0, http_1.httpPost)('/api/terminal/send', {
             thread_id: threadId,
             content,
+            from: 'terminal',
         }, token);
         return status === 200 || status === 201;
     }

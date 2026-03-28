@@ -39,6 +39,7 @@ export async function sendMessage(token: string, threadId: number, content: stri
     const { status } = await httpPost('/api/terminal/send', {
       thread_id: threadId,
       content,
+      from: 'terminal',
     }, token)
     return status === 200 || status === 201
   } catch {

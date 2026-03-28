@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
 
   const contacts = await query(`
     SELECT
+      t.id as thread_id,
       t.name,
       t.type,
       t.last_message_at as last_contact_at,
