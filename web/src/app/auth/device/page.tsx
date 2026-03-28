@@ -71,7 +71,9 @@ function DeviceAuthContent() {
         <>
           <div className="text-4xl">✅</div>
           <h1 className="font-[Manrope] font-bold text-xl text-primary">设备已授权</h1>
-          <p className="text-outline text-sm">你可以关闭这个窗口了<br/>botook-agent 正在同步你的消息...</p>
+          <p className="text-outline text-sm">botook-agent 正在同步你的消息...</p>
+          <p className="text-outline text-xs">3 秒后自动跳转到首页</p>
+          {(() => { setTimeout(() => window.location.href = '/', 3000); return null })()}
         </>
       )}
 
