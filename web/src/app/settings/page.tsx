@@ -737,7 +737,6 @@ export default function SettingsPage() {
   // ---------- Gmail OAuth ----------
 
   const handleGmailAuth = async () => {
-    await saveSettings()
     const res = await fetch('/api/gmail-auth', { method: 'POST' })
     const data = await res.json()
     if (data.error) { alert(data.error); return }
@@ -1156,20 +1155,10 @@ export default function SettingsPage() {
           {expandedCard === 'gmail-data' && (
             <div className="mt-3 bg-surface-container-low rounded-xl p-5 space-y-4 ghost-border">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-on-surface">Gmail 数据源配置</p>
+                <p className="text-sm font-medium text-on-surface">Gmail 邮件同步</p>
                 <button onClick={() => setExpandedCard(null)} className="text-outline hover:text-on-surface cursor-pointer">
                   <span className="material-symbols-outlined text-lg">close</span>
                 </button>
-              </div>
-              <p className="text-outline text-xs">
-                在{' '}
-                <a href="https://console.cloud.google.com/apis/credentials" target="_blank" className="text-secondary underline">Google Cloud Console</a>
-                {' '}创建 OAuth Client ID，回调地址填{' '}
-                <code className="text-primary font-mono text-xs">https://relay.botook.ai/gmail/callback</code>
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <Input label="Gmail Client ID" value={settings.gmail_client_id} onChange={(v) => setSettings({ ...settings, gmail_client_id: v })} placeholder="xxx.apps.googleusercontent.com" />
-                <Input label="Client Secret" type="password" value={settings.gmail_client_secret} onChange={(v) => setSettings({ ...settings, gmail_client_secret: v })} placeholder="GOCSPX-xxx" />
               </div>
               <div className="flex items-center gap-3 flex-wrap">
                 {gmailAuthed ? (
@@ -1178,13 +1167,10 @@ export default function SettingsPage() {
                     <span className="text-sm text-teal-700">{gmailEmail}</span>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-slate-300" />
-                    <span className="text-sm text-outline">未授权</span>
-                  </div>
+                  <p className="text-outline text-xs">点击授权后，将通过 Google 账号登录并同步邮件</p>
                 )}
-                <button onClick={handleGmailAuth} disabled={!settings.gmail_client_id}
-                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed hover:bg-primary-container">
+                <button onClick={handleGmailAuth}
+                  className="px-4 py-2 rounded-xl bg-primary text-on-primary text-sm font-medium transition-colors cursor-pointer hover:bg-primary-container">
                   {gmailAuthed ? '重新授权' : '授权 Gmail'}
                 </button>
                 {gmailAuthed && (

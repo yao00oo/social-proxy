@@ -1,6 +1,6 @@
 // POST /api/gmail-complete — 用 OAuth code 换 Gmail access token，存入 channels
 import { NextRequest, NextResponse } from 'next/server'
-import { queryOne, exec } from '@/lib/db'
+import { exec } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 import { getOrCreateChannel } from '@/lib/sync-helpers'
 
@@ -14,18 +14,11 @@ export async function POST(req: NextRequest) {
   const { code } = await req.json() as { code: string }
   if (!code) return NextResponse.json({ error: '缺少 code' }, { status: 400 })
 
-  // 从 settings 读 client_id/secret（用户填的）
-  const clientIdRow = await queryOne<{ value: string }>(
-    "SELECT value FROM settings WHERE key = 'gmail_client_id' AND user_id = ?", [userId]
-  )
-  const clientSecretRow = await queryOne<{ value: string }>(
-    "SELECT value FROM settings WHERE key = 'gmail_client_secret' AND user_id = ?", [userId]
-  )
-  const clientId = clientIdRow?.value || ''
-  const clientSecret = clientSecretRow?.value || ''
+  const clientId = process.env.GMAIL_CLIENT_ID || ''
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET || ''
 
   if (!clientId || !clientSecret) {
-    return NextResponse.json({ error: '请先配置 Gmail Client ID 和 Secret' }, { status: 400 })
+    return NextResponse.json({ error: '服务端未配置 Gmail OAuth 凭证' }, { status: 500 })
   }
 
   // code 换 token

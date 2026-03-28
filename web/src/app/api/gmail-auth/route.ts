@@ -1,7 +1,7 @@
 // POST /api/gmail-auth — 生成 Google OAuth 授权 URL
 // GET  /api/gmail-auth — 查询授权状态
-import { NextRequest, NextResponse } from 'next/server'
-import { queryOne, exec } from '@/lib/db'
+import { NextResponse } from 'next/server'
+import { exec, queryOne } from '@/lib/db'
 import crypto from 'crypto'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 
@@ -19,11 +19,8 @@ export async function POST() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const clientIdRow = await queryOne<{ value: string }>(
-    "SELECT value FROM settings WHERE key = 'gmail_client_id' AND user_id = ?", [userId]
-  )
-  const clientId = clientIdRow?.value
-  if (!clientId) return NextResponse.json({ error: '请先填写 Gmail Client ID' }, { status: 400 })
+  const clientId = process.env.GMAIL_CLIENT_ID
+  if (!clientId) return NextResponse.json({ error: '服务端未配置 GMAIL_CLIENT_ID' }, { status: 500 })
 
   const state = crypto.randomBytes(16).toString('hex')
   await exec(
@@ -43,7 +40,7 @@ export async function POST() {
   })
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
 
-  return NextResponse.json({ authUrl })
+  return NextResponse.json({ authUrl, state })
 }
 
 // GET — 查询授权状态（从 channels 表读）

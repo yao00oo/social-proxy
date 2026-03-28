@@ -39,8 +39,8 @@ async function ensureToken(channelId: number): Promise<string> {
   // 提前 5 分钟刷新
   if (Date.now() - tokenTime > (expiresIn - 300) * 1000 && refreshToken) {
     log('刷新 Gmail token...')
-    const clientId = creds.client_id || ''
-    const clientSecret = creds.client_secret || ''
+    const clientId = process.env.GMAIL_CLIENT_ID || creds.client_id || ''
+    const clientSecret = process.env.GMAIL_CLIENT_SECRET || creds.client_secret || ''
 
     const res = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',

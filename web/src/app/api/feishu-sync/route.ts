@@ -473,12 +473,8 @@ async function fullSync(userId: string) {
     log('获取会话列表...')
     const chats = await listChats(userToken)
 
-    // 2.5. Discover p2p chats via search API (only if we have few p2p threads)
-    const existingP2pCount = await queryOne<{ n: number }>(
-      "SELECT COUNT(*) as n FROM threads WHERE user_id = ? AND channel_id = ? AND type = 'dm'",
-      [userId, channelId],
-    )
-    if ((existingP2pCount?.n || 0) < 5 && Date.now() - startTime < 30000) {
+    // 2.5. Discover p2p chats via search API (listChats 不返回私聊)
+    if (Date.now() - startTime < 30000) {
       log('搜索私聊...')
       const knownIds = new Set(chats.map(c => c.chat_id))
       const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds)
