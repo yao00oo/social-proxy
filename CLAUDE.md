@@ -337,6 +337,8 @@ GOOGLE_CLIENT_SECRET  # Google OAuth
 OPENROUTER_API_KEY    # AI 模型调用
 FEISHU_APP_ID         # 飞书应用（可选，不设则用户自建）
 FEISHU_APP_SECRET     # 飞书应用（可选）
+GMAIL_CLIENT_ID       # Gmail OAuth（预置，用户无需配置）
+GMAIL_CLIENT_SECRET   # Gmail OAuth（预置）
 ```
 
 用 `npx vercel env add KEY production --value "VALUE" --yes` 管理。
