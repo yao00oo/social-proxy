@@ -30,11 +30,12 @@ export async function GET(req: NextRequest) {
     LEFT JOIN channels ch ON t.channel_id = ch.id
     WHERE t.user_id = ? ${searchClause}
     GROUP BY t.id, t.name, t.type, t.last_message_at, ch.platform
+    HAVING COUNT(m.id) > 0
     ORDER BY t.last_message_at DESC NULLS LAST
     LIMIT ?
   `, [...params, limit])
 
-  const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM threads WHERE user_id = ?', [userId])
+  const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM threads t WHERE t.user_id = ? AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id)', [userId])
   const total = totalRow?.n || 0
 
   return NextResponse.json({ contacts, total })

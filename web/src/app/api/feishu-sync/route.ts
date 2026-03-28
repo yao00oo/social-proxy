@@ -228,6 +228,7 @@ async function listChats(userToken: string): Promise<Array<{ chat_id: string; na
 interface FeishuMessage {
   message_id: string
   sender_id: string
+  sender_type: string // 'user' | 'app' | 'anonymous' | 'unknown' | ''
   chat_id: string
   create_time: string
   msg_type: string
@@ -266,6 +267,7 @@ async function listMessages(
       messages.push({
         message_id: item.message_id,
         sender_id: item.sender?.id || '',
+        sender_type: item.sender?.sender_type || '',
         chat_id: chatId,
         create_time: item.create_time,
         msg_type: item.msg_type,
@@ -299,11 +301,22 @@ async function processChatMessages(
     const ts = toLocalTime(parseInt(msg.create_time))
     const isSelf = msg.sender_id === myUserId
     const direction = isSelf ? 'sent' : 'received'
-    const senderDisplay = isSelf ? (myName || '我') : (senderNameCache.get(msg.sender_id) || msg.sender_id || '未知')
 
-    // Resolve sender contact + identity for non-self messages
+    // 解析发送者名字（根据 sender_type 区分人/机器人/系统）
+    let senderDisplay: string
+    if (isSelf) {
+      senderDisplay = myName || '我'
+    } else if (msg.sender_type === 'app' || msg.sender_id.startsWith('cli_')) {
+      senderDisplay = '机器人'
+    } else if (!msg.sender_id || msg.sender_type === 'unknown' || msg.sender_type === 'anonymous') {
+      senderDisplay = '系统消息'
+    } else {
+      senderDisplay = senderNameCache.get(msg.sender_id) || msg.sender_id
+    }
+
+    // Resolve sender contact + identity for real users only (not bots/system)
     let senderIdentityId: number | undefined
-    if (!isSelf && msg.sender_id) {
+    if (!isSelf && msg.sender_id && msg.sender_type === 'user') {
       const contactName = senderNameCache.get(msg.sender_id) || msg.sender_id
       const contact = await getOrCreateContact(userId, contactName)
       const identity = await getOrCreateContactIdentity(
