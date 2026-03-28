@@ -433,6 +433,58 @@ function useDocSync() {
   return { running, log, result, handleSync }
 }
 
+// ---------- Channel Data Panel ----------
+
+function ChannelDataPanel({ platform, data, onRefresh }: { platform: string; data: any; onRefresh: () => void }) {
+  const [deleting, setDeleting] = useState(false)
+
+  if (!data) return null
+
+  const handleDelete = async () => {
+    if (!confirm(`确定要删除 ${platform} 的所有数据吗？此操作不可恢复。`)) return
+    setDeleting(true)
+    await fetch(`/api/channel-data?platform=${platform}`, { method: 'DELETE' })
+    setDeleting(false)
+    onRefresh()
+  }
+
+  const handleToggle = async () => {
+    await fetch('/api/channel-data', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ platform, enabled: !data.enabled })
+    })
+    onRefresh()
+  }
+
+  return (
+    <div className="mt-4 pt-4 border-t border-outline-variant/10">
+      <p className="text-[11px] font-bold uppercase tracking-wider text-outline mb-2">数据管理</p>
+      <div className="flex items-center gap-4 text-xs text-on-surface-variant mb-3">
+        <span>{data.threads} 个会话</span>
+        <span>·</span>
+        <span>{data.messages} 条消息</span>
+        {data.last_message_at && (
+          <>
+            <span>·</span>
+            <span>最新消息：{data.last_message_at.slice(0, 16)}</span>
+          </>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <button onClick={handleDelete} disabled={deleting}
+          className="px-3 py-1.5 text-xs rounded-lg text-red-600 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50 cursor-pointer">
+          {deleting ? '删除中...' : '删除数据'}
+        </button>
+        <button onClick={handleToggle}
+          className="px-3 py-1.5 text-xs rounded-lg text-on-surface-variant bg-surface-container-high hover:bg-surface-container-highest transition-colors cursor-pointer">
+          {data.enabled ? '停用' : '启用'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ---------- Main Settings Page ----------
 
 export default function SettingsPage() {
@@ -479,6 +531,9 @@ export default function SettingsPage() {
   // Expanded panels
   const [expandedCard, setExpandedCard] = useState<string | null>(null)
 
+  // Channel data management
+  const [channelData, setChannelData] = useState<Record<string, any>>({})
+
   // Terminal
   const [terminalConnected, setTerminalConnected] = useState(false)
   const [terminalName, setTerminalName] = useState<string | null>(null)
@@ -505,6 +560,15 @@ export default function SettingsPage() {
     const data = await fetch('/api/gmail-auth').then(r => r.json())
     setGmailAuthed(data.authed)
     if (data.email) setGmailEmail(data.email)
+  }, [])
+
+  const fetchChannelData = useCallback(async () => {
+    const data = await fetch('/api/channel-data').then(r => r.json()).catch(() => ({ channels: [] }))
+    const map: Record<string, any> = {}
+    for (const ch of data.channels || []) {
+      map[ch.platform] = ch
+    }
+    setChannelData(map)
   }, [])
 
   const saveSettings = async () => {
@@ -540,6 +604,7 @@ export default function SettingsPage() {
     fetchSettings()
     checkFeishuAuth()
     checkGmailAuth()
+    fetchChannelData()
     // Load available models
     fetch('/api/models').then(r => r.json()).then(data => setAvailableModels(data.models || [])).catch(() => {})
     // Load current model selection
@@ -556,7 +621,7 @@ export default function SettingsPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ autoSyncSeconds: 15 }),
     })
-  }, [fetchSettings, checkFeishuAuth, checkGmailAuth])
+  }, [fetchSettings, checkFeishuAuth, checkGmailAuth, fetchChannelData])
 
   // ---------- WeChat Import ----------
 
@@ -913,6 +978,8 @@ export default function SettingsPage() {
                   <span className="text-xs text-teal-700 font-medium">{terminalName} 已连接</span>
                 </div>
               )}
+
+              <ChannelDataPanel platform="terminal" data={channelData.terminal} onRefresh={fetchChannelData} />
             </div>
           )}
 
@@ -1026,6 +1093,8 @@ export default function SettingsPage() {
                       上次同步：导入 {feishuResult.imported || 0} 条消息
                     </p>
                   )}
+
+                  <ChannelDataPanel platform="feishu" data={channelData.feishu} onRefresh={fetchChannelData} />
                 </>
               ) : (
                 /* Not connected: show guided stepper */
@@ -1100,6 +1169,8 @@ export default function SettingsPage() {
                 <p>• 如果提示权限不足，在「系统设置 → 隐私与安全性 → 完全磁盘访问」中添加终端</p>
                 <p>• agent 会在后台运行，关闭终端后需要重新启动</p>
               </div>
+
+              <ChannelDataPanel platform="imessage" data={channelData.imessage} onRefresh={fetchChannelData} />
             </div>
           )}
         </div>
