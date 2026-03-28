@@ -239,11 +239,12 @@ async function listMessages(
   userToken: string,
   chatId: string,
   startTime?: string,
+  maxMessages: number = 500, // 每次请求最多拉 500 条，大群分多次同步
 ): Promise<FeishuMessage[]> {
   const messages: FeishuMessage[] = []
   let pageToken = ''
   let pages = 0
-  const MAX_PAGES = 1000
+  const MAX_PAGES = Math.ceil(maxMessages / 50)
 
   while (pages++ < MAX_PAGES) {
     const params: Record<string, string> = {
