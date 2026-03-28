@@ -376,7 +376,7 @@ export default function HomePage() {
         const sentCount = realMessages.length + 1 // optimistic add 后的数量
         for (let i = 0; i < 15; i++) {
           await new Promise(r => setTimeout(r, 2000))
-          const pollRes = await fetch(`/api/contacts/${encodeURIComponent(selectedName)}`).then(r => r.json())
+          const pollRes = await fetch(`/api/contacts/${encodeURIComponent(selectedName)}?_t=${Date.now()}`).then(r => r.json())
           const msgs: Message[] = pollRes.messages || []
           if (msgs.length > sentCount) {
             setRealMessages(msgs)

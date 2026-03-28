@@ -28,9 +28,10 @@ export async function POST(req: NextRequest) {
 
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
 
-  // from=terminal → 终端发出的（Web 看到的是"对方发来的"）
-  // from=web（默认）→ Web 发给终端的（终端 daemon poll 到后执行）
-  const direction = from === 'terminal' ? 'sent' : 'received'
+  // 方向以用户视角为准：
+  // from=web（默认）→ 用户发给终端 → direction='sent'
+  // from=terminal → 终端回复用户 → direction='received'
+  const direction = from === 'terminal' ? 'received' : 'sent'
   const senderName = from === 'terminal' ? thread.name : '我'
 
   await exec(
