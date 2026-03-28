@@ -498,17 +498,6 @@ async function processChatMessages(
     await updateContactStats(userId, contactName, lastMsgTs)
   }
 
-  // 6. 修正该 thread 中之前写入的 ou_ sender_name（cache 命中的才修）
-  for (const senderId of userSenders) {
-    const realName = senderNameCache.get(senderId)
-    if (realName && realName !== senderId) {
-      await exec(
-        'UPDATE messages SET sender_name = ? WHERE thread_id = ? AND sender_name = ?',
-        [realName, threadId, senderId],
-      )
-    }
-  }
-
   return { imported: values.length, newTs }
 }
 
