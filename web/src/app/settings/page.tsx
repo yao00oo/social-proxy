@@ -780,12 +780,34 @@ export default function SettingsPage() {
 
   const handleGmailSync = async () => {
     setGmailSyncing(true); setGmailSyncLog([]); setGmailSyncResult(null)
-    await fetch('/api/gmail-sync', { method: 'POST' })
-    const poll = setInterval(async () => {
-      const s = await fetch('/api/gmail-sync').then(r => r.json())
-      setGmailSyncLog(s.log || [])
-      if (!s.running) { clearInterval(poll); setGmailSyncing(false); setGmailSyncResult(s.lastResult) }
-    }, 1500)
+
+    let round = 0
+    const MAX_ROUNDS = 30
+
+    while (round < MAX_ROUNDS) {
+      round++
+      await fetch('/api/gmail-sync', { method: 'POST' })
+
+      // 等待本轮完成
+      await new Promise<void>((resolve) => {
+        const poll = setInterval(async () => {
+          const s = await fetch('/api/gmail-sync').then(r => r.json())
+          setGmailSyncLog(s.log || [])
+          if (!s.running) {
+            clearInterval(poll)
+            setGmailSyncResult(s.lastResult)
+            resolve()
+          }
+        }, 1500)
+      })
+
+      // 检查是否需要续传
+      const status = await fetch('/api/gmail-sync').then(r => r.json())
+      if (!status.lastResult || status.lastResult.done || status.lastResult.error) break
+    }
+
+    setGmailSyncing(false)
+    fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
   }
 
   // ---------- IMAP Sync ----------
