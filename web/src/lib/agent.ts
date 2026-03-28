@@ -465,6 +465,83 @@ function createTools(userId: string): Record<string, any> {
     },
   },
 
+  install_guide: {
+    description: '获取在 Claude Code、OpenClaw、Cursor 等 AI 工具中使用 Social Proxy 的安装指南。当用户问"怎么安装"、"怎么在 Claude 里用"、"MCP 配置"等问题时调用。',
+    parameters: z.object({
+      platform: z.enum(['claude_code', 'openclaw', 'cursor', 'all']).optional().describe('目标平台，不确定就传 all'),
+    }),
+    execute: async ({ platform }: { platform?: string }) => {
+      const dbUrl = process.env.DATABASE_URL || '（请在 botook.ai 设置页获取）'
+
+      const guides: Record<string, string> = {
+        claude_code: `## Claude Code 安装指南
+
+1. 安装 MCP Server：
+\`\`\`bash
+npm install -g social-proxy-mcp
+\`\`\`
+
+2. 在 Claude Code 设置中添加 MCP：
+\`\`\`bash
+claude mcp add social-proxy -- social-proxy-mcp
+\`\`\`
+
+3. 设置数据库连接：
+在 \`~/.claude.json\` 的 social-proxy 配置中加入 env：
+\`\`\`json
+{
+  "mcpServers": {
+    "social-proxy": {
+      "command": "social-proxy-mcp",
+      "env": {
+        "DATABASE_URL": "${dbUrl}"
+      }
+    }
+  }
+}
+\`\`\`
+
+4. 重启 Claude Code，试试说"看看最近的消息"`,
+
+        openclaw: `## OpenClaw 安装指南
+
+1. 在 OpenClaw 管理后台 → Channels → 添加 MCP Channel
+
+2. 配置：
+   - Command: \`npx social-proxy-mcp\`
+   - 环境变量：\`DATABASE_URL=${dbUrl}\`
+
+3. 保存后 OpenClaw 会自动启动 MCP 进程
+
+4. 在对话中就能调用 Social Proxy 的工具了`,
+
+        cursor: `## Cursor 安装指南
+
+1. 安装 MCP Server：
+\`\`\`bash
+npm install -g social-proxy-mcp
+\`\`\`
+
+2. 打开 Cursor Settings → MCP → Add Server
+
+3. 配置：
+   - Name: social-proxy
+   - Command: social-proxy-mcp
+   - Environment: DATABASE_URL=${dbUrl}
+
+4. 重启 Cursor，在 Agent 模式中即可使用`,
+      }
+
+      if (platform && platform !== 'all' && guides[platform]) {
+        return { guide: guides[platform] }
+      }
+      return {
+        guide: Object.values(guides).join('\n\n---\n\n'),
+        tip: '复制上面的配置，DATABASE_URL 是你的专属连接串，不要分享给别人。',
+      }
+    },
+  },
+
   search_docs: {
     description: '搜索文档内容。在飞书文档、本地文件等中按关键词搜索。',
     parameters: z.object({
