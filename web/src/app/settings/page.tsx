@@ -667,6 +667,8 @@ export default function SettingsPage() {
             setFeishuUserName(completeRes.name)
             // 刷新 channels 列表
             fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
+            // 授权成功后自动开始同步
+            setTimeout(() => handleFeishuSync(), 500)
           }
           setFeishuAuthing(false)
         } else if (codeRes.error === 'Code expired' || tries > 36) {
@@ -766,6 +768,8 @@ export default function SettingsPage() {
               setGmailAuthed(true)
               setGmailEmail(completeRes.email || '')
               fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
+              // 授权成功后自动开始同步
+              setTimeout(() => handleGmailSync(), 500)
             }
           }
         } catch {}
