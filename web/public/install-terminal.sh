@@ -39,17 +39,18 @@ mkdir -p "$BIN_DIR"
 
 # 下载编译好的 JS
 echo "  下载中..."
-for f in cli.js auth.js config.js daemon.js http.js logger.js terminal.js; do
+for f in cli.js auth.js config.js daemon.js http.js logger.js terminal.js pty.js; do
   curl -fsSL "$REPO/$f" -o "$BIN_DIR/$f"
 done
 
 # 下载 package.json 并安装依赖
 curl -fsSL "$REPO/package.json" -o "$BIN_DIR/package.json"
 cd "$BIN_DIR"
+echo "  安装依赖..."
 if command -v node >/dev/null 2>&1; then
-  npm install --production --silent 2>/dev/null
+  npm install --production 2>&1 | tail -3
 elif command -v bun >/dev/null 2>&1; then
-  bun install --production 2>/dev/null
+  bun install --production 2>&1 | tail -3
 fi
 
 # 创建启动脚本

@@ -1,10 +1,10 @@
-// 后台 daemon — 轮询消息 + 执行命令 + 回传结果
+// 后台 daemon — 轮询消息 + PTY 执行 + 回传结果
 import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
-import { execSync } from 'child_process'
 import { httpGet, httpPost } from './http'
 import { TerminalConfig } from './config'
+import { PtyShell } from './pty'
 
 const PID_FILE = path.join(os.homedir(), '.socialproxy', 'daemon.pid')
 const LOG_FILE = path.join(os.homedir(), '.socialproxy', 'daemon.log')
@@ -29,27 +29,7 @@ function daemonLog(msg: string) {
   try { fs.appendFileSync(LOG_FILE, line) } catch {}
 }
 
-// ── 执行命令 ──
-function executeCommand(cmd: string): string {
-  if (!isSafe(cmd)) {
-    return `❌ 危险命令已拒绝: ${cmd}`
-  }
-
-  try {
-    const output = execSync(cmd, {
-      encoding: 'utf-8',
-      timeout: 30000,
-      maxBuffer: 1024 * 1024,
-      cwd: os.homedir(),
-      env: { ...process.env, TERM: 'dumb' },
-    }).trim()
-    return output || '(无输出)'
-  } catch (err: any) {
-    return `❌ ${err.stderr?.trim() || err.message || '执行失败'}`
-  }
-}
-
-// ── 轮询 + 执行循环 ──
+// ── 轮询 + PTY 循环 ──
 async function pollLoop(config: TerminalConfig) {
   // 启动时先获取当前最新消息 ID，跳过所有历史消息
   let lastId = 0
@@ -65,7 +45,33 @@ async function pollLoop(config: TerminalConfig) {
       }
     }
   } catch {}
-  daemonLog(`daemon started, thread=${config.threadId}, lastId=${lastId}`)
+
+  // 创建持久 PTY shell
+  const sendOutput = async (output: string) => {
+    const truncated = output.length > 8000
+      ? output.slice(0, 8000) + '\n...(输出已截断，共 ' + output.length + ' 字符)'
+      : output
+    try {
+      await httpPost('/api/terminal/send', {
+        thread_id: config.threadId,
+        content: truncated,
+        from: 'terminal',
+      }, config.token)
+    } catch (err: any) {
+      daemonLog(`send error: ${err.message}`)
+    }
+  }
+
+  let ptyShell = new PtyShell({
+    onFlush: sendOutput,
+    onExit: (code) => {
+      daemonLog(`PTY exited (code=${code}), respawning...`)
+      // 重新创建 PTY
+      ptyShell = new PtyShell({ onFlush: sendOutput, onExit: arguments.callee as any })
+    },
+  })
+
+  daemonLog(`daemon started with PTY, thread=${config.threadId}, lastId=${lastId}`)
 
   while (true) {
     try {
@@ -83,7 +89,6 @@ async function pollLoop(config: TerminalConfig) {
 
           // 只处理"收到的"消息（从 Web 端发给终端的），跳过自己发的
           if (msg.direction !== 'received') {
-            lastId = Math.max(lastId, msg.id)
             continue
           }
 
@@ -92,20 +97,17 @@ async function pollLoop(config: TerminalConfig) {
 
           daemonLog(`recv: ${content}`)
 
-          // 执行命令
-          const result = executeCommand(content)
-          daemonLog(`exec result: ${result.slice(0, 200)}`)
+          // 安全检查
+          if (!isSafe(content)) {
+            await sendOutput(`❌ 危险命令已拒绝: ${content}`)
+            continue
+          }
 
-          // 回传结果（截断过长输出）
-          const truncated = result.length > 8000
-            ? result.slice(0, 8000) + '\n...(输出已截断，共 ' + result.length + ' 字符)'
-            : result
-
-          await httpPost('/api/terminal/send', {
-            thread_id: config.threadId,
-            content: truncated,
-            from: 'terminal',
-          }, config.token)
+          // 写入 PTY stdin
+          if (!ptyShell.isAlive) {
+            ptyShell = new PtyShell({ onFlush: sendOutput })
+          }
+          ptyShell.write(content)
         }
       }
     } catch (err: any) {

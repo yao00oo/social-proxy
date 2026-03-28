@@ -64,20 +64,14 @@ async function handleStart() {
         (0, logger_1.success)(`终端：${config.name}`);
     }
     else {
+        // 每次启动都重新注册，确保拿到最新 thread_id
+        config = await (0, terminal_1.registerTerminal)(config.token);
         (0, logger_1.success)(`${config.email} | ${config.name}`);
     }
-    // 检查 daemon 是否已在运行
-    const { running, pid } = (0, daemon_1.isDaemonRunning)();
+    // 如果 daemon 已在运行，先停掉再重启（确保用最新 config）
+    const { running } = (0, daemon_1.isDaemonRunning)();
     if (running) {
-        (0, logger_1.success)(`daemon 已在运行 (PID ${pid})`);
-        console.log('');
-        (0, logger_1.dim)('终端已连接，你可以正常使用终端。');
-        (0, logger_1.dim)('Web 端发来的命令会自动执行。');
-        console.log('');
-        (0, logger_1.dim)(`发消息: socialproxy-terminal send "内容"`);
-        (0, logger_1.dim)(`状  态: socialproxy-terminal status`);
-        (0, logger_1.dim)(`停  止: socialproxy-terminal stop`);
-        return;
+        (0, daemon_1.stopDaemon)();
     }
     // 启动 daemon
     const daemonPid = (0, daemon_1.spawnDaemon)(config);

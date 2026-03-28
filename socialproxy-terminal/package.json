@@ -14,7 +14,12 @@
     "dev": "ts-node src/cli.ts",
     "start": "node dist/cli.js"
   },
-  "keywords": ["social-proxy", "terminal", "messaging", "cli"],
+  "keywords": [
+    "social-proxy",
+    "terminal",
+    "messaging",
+    "cli"
+  ],
   "author": "yaoyao",
   "license": "MIT",
   "repository": {
@@ -23,11 +28,12 @@
     "directory": "socialproxy-terminal"
   },
   "dependencies": {
+    "node-pty": "^1.1.0",
     "open": "^10.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.0.0",
-    "ts-node": "^10.0.0"
+    "ts-node": "^10.0.0",
+    "typescript": "^5.0.0"
   }
 }
