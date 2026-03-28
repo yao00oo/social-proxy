@@ -340,8 +340,22 @@ export default function HomePage() {
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [realMessages])
   useEffect(() => { aiEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [aiMessages])
 
+  // ---------- Terminal auto-polling ----------
+  // 选中终端联系人时，每 2 秒轮询新消息，独立于发送逻辑
+  useEffect(() => {
+    if (!selectedName || isAiChat || selectedContact?.platform !== 'terminal') return
+    const iv = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/contacts/${encodeURIComponent(selectedName)}?_t=${Date.now()}`)
+        const data = await res.json()
+        const msgs: Message[] = data.messages || []
+        setRealMessages(prev => msgs.length !== prev.length ? msgs : prev)
+      } catch {}
+    }, 2000)
+    return () => clearInterval(iv)
+  }, [selectedName, isAiChat, selectedContact?.platform])
+
   // ---------- Direct send (real contact chat) ----------
-  // v2: terminal support
   const handleDirectSend = useCallback(async () => {
     if (!directInput.trim() || !selectedName || isAiChat || !selectedContact) return
     const text = directInput.trim()
@@ -363,7 +377,7 @@ export default function HomePage() {
     }
 
     // Optimistic: add to messages immediately
-    // 终端消息在 DB 中以终端视角存储，optimistic 也用相同约定（received=终端收到=用户发的）
+    // 终端消息在 DB 中以终端视角存储（received=终端收到=用户发的）
     const now = new Date().toISOString().slice(0, 19).replace('T', ' ')
     const optDir = selectedContact.platform === 'terminal' ? 'received' : 'sent'
     setRealMessages(prev => [...prev, { direction: optDir as 'sent' | 'received', content: text, timestamp: now }])
@@ -373,23 +387,11 @@ export default function HomePage() {
       const data = await res.json()
       if (!data.success) {
         setRealMessages(prev => [...prev, { direction: 'received', content: `[发送失败: ${data.message}]`, timestamp: now }])
-      } else if (selectedContact.platform === 'terminal') {
-        // 终端：轮询等待回复（每 2 秒，最多 30 秒）
-        const sentCount = realMessages.length + 1 // optimistic add 后的数量
-        for (let i = 0; i < 15; i++) {
-          await new Promise(r => setTimeout(r, 2000))
-          const pollRes = await fetch(`/api/contacts/${encodeURIComponent(selectedName)}?_t=${Date.now()}`).then(r => r.json())
-          const msgs: Message[] = pollRes.messages || []
-          if (msgs.length > sentCount) {
-            setRealMessages(msgs)
-            break
-          }
-        }
       }
     } catch {
       setRealMessages(prev => [...prev, { direction: 'received', content: '[发送失败，请检查网络]', timestamp: now }])
     }
-  }, [directInput, selectedName, selectedContact, isAiChat, realMessages])
+  }, [directInput, selectedName, selectedContact, isAiChat])
 
   // ---------- Contact filtering ----------
   const filteredContacts = search ? contacts.filter(c => c.name.includes(search)) : contacts
