@@ -418,8 +418,8 @@ async function fullSync(userId: string) {
       await log(`  [${pct}%] 同步 ${chatIndex}/${sortedChats.length}: ${chat.name}`)
 
       try {
-        // 动态间隔：刚限流过就等久一点
-        const waitMs = consecutiveRateLimits > 0 ? 3000 : 1000
+        // 动态间隔：刚限流过等3s，正常500ms
+        const waitMs = consecutiveRateLimits > 0 ? 3000 : 500
         if (chatIndex > 1) await new Promise(r => setTimeout(r, waitMs))
 
         const msgs = await listMessages(userToken, chat.chat_id, msgStartTime)
