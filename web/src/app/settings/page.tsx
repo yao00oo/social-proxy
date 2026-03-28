@@ -660,6 +660,8 @@ export default function SettingsPage() {
           } else {
             setFeishuAuthed(true)
             setFeishuUserName(completeRes.name)
+            // 刷新 channels 列表
+            fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
           }
           setFeishuAuthing(false)
         } else if (codeRes.error === 'Code expired' || tries > 36) {
@@ -710,6 +712,8 @@ export default function SettingsPage() {
     }
 
     setFeishuSyncing(false)
+    // 刷新 channels 数据（更新消息数等）
+    fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
   }
 
   // ---------- Gmail OAuth ----------
@@ -739,6 +743,7 @@ export default function SettingsPage() {
             } else {
               setGmailAuthed(true)
               setGmailEmail(completeRes.email || '')
+              fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
             }
           }
         } catch {}
