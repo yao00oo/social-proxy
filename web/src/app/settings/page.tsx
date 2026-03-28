@@ -462,6 +462,9 @@ export default function SettingsPage() {
   const [feishuCredSaving, setFeishuCredSaving] = useState(false)
   const [feishuCredSaved, setFeishuCredSaved] = useState(false)
 
+  // Sync status per channel (polled)
+  const [syncStatus, setSyncStatus] = useState<Record<string, any>>({})
+
   // Install to AI tools
   const [installTab, setInstallTab] = useState<'tutorial' | 'ai'>('tutorial')
   const [installCopied, setInstallCopied] = useState<string | null>(null)
@@ -598,16 +601,18 @@ export default function SettingsPage() {
     }).catch(() => {})
     // Load channels
     fetch('/api/channels').then(r => r.json()).then(data => setChannels(data.channels || [])).catch(() => {})
+    // Load sync status
+    fetch('/api/sync-status').then(r => r.json()).then(data => setSyncStatus(data)).catch(() => {})
     // Check terminal connection
     fetch('/api/contacts?limit=500').then(r => r.json()).then(data => {
       const term = (data.contacts || []).find((c: any) => c.platform === 'terminal')
       if (term) { setTerminalConnected(true); setTerminalName(term.name) }
     }).catch(() => {})
-    fetch('/api/feishu-sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ autoSyncSeconds: 15 }),
-    })
+    // 轮询同步状态（每 5 秒）
+    const syncPoll = setInterval(() => {
+      fetch('/api/sync-status').then(r => r.json()).then(data => setSyncStatus(data)).catch(() => {})
+    }, 5000)
+    return () => clearInterval(syncPoll)
   }, [fetchSettings, checkFeishuAuth, checkGmailAuth])
 
   // ---------- WeChat Import ----------
@@ -871,18 +876,38 @@ export default function SettingsPage() {
               const platformColors: Record<string, string> = { feishu: 'text-blue-600', gmail: 'text-red-500', wechat: 'text-teal-600', imessage: 'text-green-600', terminal: 'text-on-surface' }
               const icon = platformIcons[ch.platform] || 'extension'
               const color = platformColors[ch.platform] || 'text-on-surface-variant'
-              const syncState = ch.sync_state
-              const isSyncing = syncState && typeof syncState === 'object' && Object.keys(syncState).length > 0
-              const statusDot = ch.enabled ? (isSyncing ? 'bg-teal-500' : 'bg-yellow-400') : 'bg-gray-300'
-              const statusText = ch.enabled ? (isSyncing ? '已同步' : '同步中') : '未同步'
-              const statusTextColor = ch.enabled ? (isSyncing ? 'text-teal-700' : 'text-yellow-700') : 'text-gray-500'
-              const statLabel = ch.platform === 'gmail' ? `${ch.msg_count} 封邮件` : `${ch.thread_count} 个会话`
+
+              // 同步进度（从 syncStatus 读取）
+              const platformSync = ch.platform === 'feishu' ? syncStatus : null
+              const isSyncing = platformSync?.running === true || feishuSyncing
+              const syncProgress = platformSync?.lastResult
+              const hasSyncedData = ch.thread_count > 0 || ch.msg_count > 0
+
+              let statusDot = 'bg-gray-300'
+              let statusText = '未同步'
+              let statusTextColor = 'text-gray-500'
+
+              if (isSyncing) {
+                statusDot = 'bg-yellow-400 animate-pulse'
+                const pct = syncProgress?.chats ? Math.round(((syncProgress.chats - (syncProgress.remaining || 0)) / syncProgress.chats) * 100) : 0
+                statusText = pct > 0 ? `同步中 ${pct}%` : '同步中...'
+                statusTextColor = 'text-yellow-700'
+              } else if (hasSyncedData) {
+                statusDot = 'bg-teal-500'
+                statusText = '已同步'
+                statusTextColor = 'text-teal-700'
+              }
+
+              const statLabel = ch.platform === 'gmail'
+                ? `${ch.msg_count} 封邮件`
+                : ch.thread_count > 0
+                  ? `${ch.thread_count} 个会话 · ${ch.msg_count} 条消息`
+                  : '暂无数据'
 
               return (
                 <div key={ch.id}
-                  className="bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-3.5 h-[100px] flex flex-col justify-between group cursor-pointer hover:bg-surface-container-low transition-colors"
+                  className="bg-white outline outline-1 outline-outline-variant/20 rounded-[10px] p-3.5 h-[110px] flex flex-col justify-between group cursor-pointer hover:bg-surface-container-low transition-colors"
                   onClick={() => {
-                    // Clicking an existing channel card: show its platform panel
                     const panelKey = ch.platform === 'gmail' ? 'gmail-data' : ch.platform
                     setExpandedCard(expandedCard === panelKey ? null : panelKey)
                     setShowAddSource(false)
@@ -895,6 +920,12 @@ export default function SettingsPage() {
                       <p className="text-xs text-on-surface-variant mt-0.5 truncate">{statLabel}</p>
                     </div>
                   </div>
+                  {/* 同步进度条 */}
+                  {isSyncing && syncProgress?.chats > 0 && (
+                    <div className="w-full bg-surface-container-highest/30 rounded-full h-1">
+                      <div className="bg-primary h-1 rounded-full transition-all" style={{ width: `${Math.round(((syncProgress.chats - (syncProgress.remaining || 0)) / syncProgress.chats) * 100)}%` }} />
+                    </div>
+                  )}
                   <div className="flex items-center gap-1.5">
                     <div className={`w-2 h-2 rounded-full ${statusDot}`} />
                     <span className={`text-xs ${statusTextColor}`}>{statusText}</span>
@@ -1055,49 +1086,6 @@ export default function SettingsPage() {
                     </button>
                   </div>
 
-                  {/* Auto sync */}
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={autoSync}
-                        onChange={async (e) => {
-                          const enabled = e.target.checked
-                          setAutoSync(enabled)
-                          await fetch('/api/feishu-sync', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ autoSyncSeconds: enabled ? autoSyncSeconds : 0 }),
-                          })
-                        }}
-                        className="accent-primary w-4 h-4"
-                      />
-                      <span className="text-sm text-on-surface">自动同步</span>
-                    </label>
-                    <select
-                      value={autoSyncSeconds}
-                      onChange={async (e) => {
-                        const secs = Number(e.target.value)
-                        setAutoSyncSeconds(secs)
-                        if (autoSync) {
-                          await fetch('/api/feishu-sync', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ autoSyncSeconds: secs }),
-                          })
-                        }
-                      }}
-                      disabled={!autoSync}
-                      className="bg-surface border border-outline-variant rounded-xl px-3 py-2 text-on-surface text-sm focus:outline-none disabled:opacity-40"
-                    >
-                      <option value={15}>每 15 秒</option>
-                      <option value={30}>每 30 秒</option>
-                      <option value={60}>每 1 分钟</option>
-                      <option value={300}>每 5 分钟</option>
-                      <option value={600}>每 10 分钟</option>
-                    </select>
-                    {autoSync && <span className="text-xs text-primary">● 运行中</span>}
-                  </div>
 
                   {/* Sync log */}
                   {(feishuLog.length > 0 || feishuResult) && (
