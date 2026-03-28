@@ -7,7 +7,11 @@ export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  const totalRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?', [userId])
+  // 有消息的会话数（而非 contacts 数）
+  const totalRow = await queryOne<{ n: number }>(
+    'SELECT COUNT(*) as n FROM threads t WHERE t.user_id = ? AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id)',
+    [userId]
+  )
   const total = totalRow?.n || 0
   const totalMsgsRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM messages WHERE user_id = ?', [userId])
   const totalMsgs = totalMsgsRow?.n || 0
