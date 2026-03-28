@@ -105,7 +105,10 @@ function createTools(userId: string): Record<string, any> {
         SELECT name, avatar, tags, notes, last_contact_at, message_count,
           CASE WHEN last_contact_at IS NULL THEN 9999
             ELSE CAST(EXTRACT(EPOCH FROM NOW() - last_contact_at::timestamp) / 86400 AS INTEGER)
-          END AS days_since
+          END AS days_since,
+          (SELECT string_agg(DISTINCT ch.platform, ',') FROM contact_identities ci
+           JOIN channels ch ON ci.channel_id = ch.id
+           WHERE ci.contact_id = contacts.id) as platforms
         FROM contacts ${where} ORDER BY last_contact_at DESC LIMIT ?
       `, [...params, lim])
       const countRow = await queryOne<{ n: number }>('SELECT COUNT(*) as n FROM contacts WHERE user_id = ?', [userId])
@@ -149,10 +152,12 @@ function createTools(userId: string): Record<string, any> {
       const total = totalRow?.n ?? 0
 
       const messages = await query(`
-        SELECT direction, sender_name, content, timestamp FROM (
-          SELECT direction, sender_name, content, timestamp FROM messages
-          WHERE thread_id IN (${placeholders}) AND user_id = ?
-          ORDER BY timestamp DESC LIMIT ?
+        SELECT direction, sender_name, content, timestamp, platform FROM (
+          SELECT m.direction, m.sender_name, m.content, m.timestamp, ch.platform
+          FROM messages m
+          JOIN channels ch ON m.channel_id = ch.id
+          WHERE m.thread_id IN (${placeholders}) AND m.user_id = ?
+          ORDER BY m.timestamp DESC LIMIT ?
         ) sub ORDER BY timestamp ASC
       `, [...threadIds, userId, lim])
 
@@ -209,8 +214,9 @@ function createTools(userId: string): Record<string, any> {
         }
         const placeholders = threadIds.map(() => '?').join(',')
         const rows = await query(
-          `SELECT t.name as thread_name, m.direction, m.sender_name, m.content, m.timestamp
+          `SELECT t.name as thread_name, m.direction, m.sender_name, m.content, m.timestamp, ch.platform
            FROM messages m JOIN threads t ON m.thread_id = t.id
+           JOIN channels ch ON m.channel_id = ch.id
            WHERE m.thread_id IN (${placeholders}) AND m.user_id = ? AND m.content LIKE ?
            ORDER BY m.timestamp DESC LIMIT ?`,
           [...threadIds, userId, `%${keyword}%`, lim]
@@ -218,8 +224,9 @@ function createTools(userId: string): Record<string, any> {
         return { count: rows.length, results: rows }
       } else {
         const rows = await query(
-          `SELECT t.name as thread_name, m.direction, m.sender_name, m.content, m.timestamp
+          `SELECT t.name as thread_name, m.direction, m.sender_name, m.content, m.timestamp, ch.platform
            FROM messages m JOIN threads t ON m.thread_id = t.id
+           JOIN channels ch ON m.channel_id = ch.id
            WHERE m.user_id = ? AND m.content LIKE ?
            ORDER BY m.timestamp DESC LIMIT ?`,
           [userId, `%${keyword}%`, lim]
@@ -247,7 +254,12 @@ function createTools(userId: string): Record<string, any> {
         SELECT name, message_count, CAST(EXTRACT(EPOCH FROM NOW() - last_contact_at::timestamp) / 86400 AS INTEGER) AS days_since
         FROM contacts WHERE last_contact_at IS NOT NULL AND user_id = ? ORDER BY days_since DESC LIMIT 10
       `, [userId])
-      return { total, totalMsgs, buckets, overdue }
+      const platformCounts = await query(`
+        SELECT ch.platform, COUNT(*) as count FROM messages m
+        JOIN channels ch ON m.channel_id = ch.id
+        WHERE m.user_id = ? GROUP BY ch.platform
+      `, [userId])
+      return { total, totalMsgs, buckets, overdue, platformCounts }
     },
   },
 
@@ -260,9 +272,10 @@ function createTools(userId: string): Record<string, any> {
       const rows = await query<any>(`
         SELECT m.id, m.platform_msg_id as message_id, t.name as thread_name, t.type as thread_type,
           m.sender_name, m.content as incoming_content, m.timestamp as created_at,
-          COALESCE(m.is_read, 0) as is_read, m.metadata
+          COALESCE(m.is_read, 0) as is_read, m.metadata, ch.platform
         FROM messages m
         JOIN threads t ON m.thread_id = t.id
+        JOIN channels ch ON m.channel_id = ch.id
         WHERE m.direction = 'received' AND m.user_id = ?
         ORDER BY m.timestamp DESC LIMIT ?
       `, [userId, Math.min(limit ?? 50, 100)])
