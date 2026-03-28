@@ -584,15 +584,9 @@ async function fullSync(userId: string) {
       }
     }
 
-    // 5. Sort chats: unsycned first (spread across all groups), then synced (incremental)
-    //    This ensures all groups get their first batch before any group gets its second
-    const sortedChats = [...chats].sort((a, b) => {
-      const ta = threadMap.get(a.chat_id)
-      const tb = threadMap.get(b.chat_id)
-      const aSynced = ta && ta.last_sync_ts !== '0' ? 1 : 0
-      const bSynced = tb && tb.last_sync_ts !== '0' ? 1 : 0
-      return aSynced - bSynced // unsynced first
-    })
+    // 5. Sort chats: keep original order from listChats (ByActiveTimeDesc)
+    //    Most recently active chats sync first, so users see recent messages sooner
+    const sortedChats = [...chats]
 
     let chatIndex = 0
     let consecutiveRateLimits = 0
