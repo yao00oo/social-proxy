@@ -32,7 +32,13 @@ export async function POST(req: NextRequest) {
     return new Response('No messages', { status: 400 })
   }
 
-  const result = await runAgent(userId, messages, modelId)
+  let result
+  try {
+    result = await runAgent(userId, messages, modelId)
+  } catch (err: any) {
+    console.error('[agent] runAgent error:', err)
+    return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+  }
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
