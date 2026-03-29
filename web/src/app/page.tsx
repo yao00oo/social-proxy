@@ -115,12 +115,33 @@ export default function HomePage() {
   interface ToolCallInfo { name: string; args: any; result?: any }
   interface DraftInfo { to: string; content: string; platform: 'feishu' | 'email'; status: 'pending' | 'sent' | 'cancelled' }
   interface AiMsg { id: string; role: 'user' | 'assistant' | 'tool' | 'draft'; content: string; toolCall?: ToolCallInfo; draft?: DraftInfo }
-  const [aiMessages, setAiMessages] = useState<AiMsg[]>([
-    { id: 'welcome', role: 'assistant', content: '你好！我是小林，你的社交助理。告诉我你想给谁发什么消息，我来帮你起草。\n\n你可以试试：\n- "帮我看看最近谁没联系了"\n- "帮我给张三发消息催一下项目"\n- "搜索一下关于合同的聊天记录"' },
-  ])
+  const welcomeMsg: AiMsg = { id: 'welcome', role: 'assistant', content: '你好！我是小林，你的社交助理。告诉我你想给谁发什么消息，我来帮你起草。\n\n你可以试试：\n- "帮我看看最近谁没联系了"\n- "帮我给张三发消息催一下项目"\n- "搜索一下关于合同的聊天记录"' }
+  const [aiMessages, setAiMessages] = useState<AiMsg[]>([welcomeMsg])
   const [aiInput, setAiInput] = useState('')
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [conversationId, setConversationId] = useState<number | null>(null)
+
+  // 加载上次对话
+  useEffect(() => {
+    fetch('/api/conversations').then(r => r.json()).then(data => {
+      if (data.messages && data.messages.length > 0) {
+        const loaded: AiMsg[] = [welcomeMsg]
+        for (const m of data.messages) {
+          const id = `loaded-${loaded.length}`
+          if (m.toolCalls?.draft) {
+            loaded.push({ id, role: 'draft', content: '', draft: m.toolCalls.draft })
+          } else if (m.toolCalls) {
+            loaded.push({ id, role: 'tool', content: m.content, toolCall: m.toolCalls })
+          } else {
+            loaded.push({ id, role: m.role, content: m.content })
+          }
+        }
+        setAiMessages(loaded)
+        setConversationId(data.conversationId)
+      }
+    }).catch(() => {})
+  }, [])
 
   const aiSendMessage = useCallback(async (text: string) => {
     if (!text.trim() || aiLoading) return
@@ -263,8 +284,19 @@ export default function HomePage() {
       setAiError(err instanceof Error ? err.message : '请求失败')
     } finally {
       setAiLoading(false)
+      // 保存对话到数据库
+      setAiMessages(current => {
+        fetch('/api/conversations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversationId, messages: current.filter(m => m.id !== 'welcome') }),
+        }).then(r => r.json()).then(data => {
+          if (data.conversationId) setConversationId(data.conversationId)
+        }).catch(() => {})
+        return current
+      })
     }
-  }, [aiMessages, aiLoading])
+  }, [aiMessages, aiLoading, conversationId])
 
   const [privacyToggles, setPrivacyToggles] = useState({ showName: true, autoIntent: false, emotionSync: false })
 
