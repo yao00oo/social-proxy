@@ -524,7 +524,7 @@ async function fullSync(userId: string) {
   const result = { chats: 0, imported: 0, skipped: 0, errors: [] as string[], done: false, remaining: 0, hasMoreHistory: false }
   const startTime = Date.now()
   const TIMEOUT_MS = 50000 // stop 10s before Vercel 60s limit
-  const MAX_API_CALLS_PER_REQUEST = 15 // 飞书 listMessages ~50次/分钟，保守控制
+  const MAX_API_CALLS_PER_REQUEST = 40 // 飞书限流 ~50次/分钟，50秒内安全做 40 次
   let apiCallCount = 0
 
   try {
@@ -546,34 +546,41 @@ async function fullSync(userId: string) {
       [userId, channelId],
     )
 
-    // 3. List all chats (group only — listChats doesn't return p2p)
-    log('获取会话列表...')
-    const chats = await listChats(userToken)
+    // 3. List all chats
+    // 如果 DB 里已经有 threads（续传场景），跳过 listChats + p2p discovery，直接用已有的
+    const isFirstSync = existingThreads.length === 0
+    let chats: Array<{ chat_id: string; name: string; chat_type: string }> = []
 
-    // 4. Discover p2p chats via search API (listChats 不返回私聊)
-    // 4. Discover p2p（只在首次或 p2p 很少时才搜，避免每轮浪费 20 秒）
-    const existingP2pCount = existingThreads.filter(t => t.platform_thread_id && !chats.some(c => c.chat_id === t.platform_thread_id)).length
-    const hasP2pThreads = existingThreads.some(t => {
-      // 检查是否有 type='dm' 的 thread（通过查 DB 更准确但已有数据）
-      return false // 简单判断：靠已有 threads 数量
-    })
-    const p2pThreadCount = await queryOne<{ n: number }>(
-      "SELECT COUNT(*)::int as n FROM threads WHERE user_id = ? AND channel_id = ? AND type = 'dm'",
-      [userId, channelId],
-    )
-    const timeLeft = TIMEOUT_MS - (Date.now() - startTime)
-    if ((p2pThreadCount?.n || 0) === 0 && timeLeft > 20000) {
-      // 还没有任何 p2p，搜一次
-      log('首次搜索私聊...')
-      const knownIds = new Set(chats.map(c => c.chat_id))
-      for (const t of existingThreads) knownIds.add(t.platform_thread_id)
-      const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds, senderNameCache, Math.min(timeLeft - 15000, 15000))
-      if (p2pChats.length > 0) {
-        for (const p of p2pChats) {
-          chats.push({ chat_id: p.chat_id, name: p.name, chat_type: 'p2p' })
+    if (isFirstSync || existingThreads.length < 10) {
+      log('获取会话列表...')
+      chats = await listChats(userToken)
+
+      // 4. Discover p2p（只在首次时搜索）
+      const p2pThreadCount = await queryOne<{ n: number }>(
+        "SELECT COUNT(*)::int as n FROM threads WHERE user_id = ? AND channel_id = ? AND type = 'dm'",
+        [userId, channelId],
+      )
+      const timeLeft = TIMEOUT_MS - (Date.now() - startTime)
+      if ((p2pThreadCount?.n || 0) === 0 && timeLeft > 20000) {
+        log('首次搜索私聊...')
+        const knownIds = new Set(chats.map(c => c.chat_id))
+        for (const t of existingThreads) knownIds.add(t.platform_thread_id)
+        const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds, senderNameCache, Math.min(timeLeft - 15000, 15000))
+        if (p2pChats.length > 0) {
+          for (const p of p2pChats) {
+            chats.push({ chat_id: p.chat_id, name: p.name, chat_type: 'p2p' })
+          }
+          log(`发现 ${p2pChats.length} 个新私聊`)
         }
-        log(`发现 ${p2pChats.length} 个新私聊`)
       }
+    } else {
+      // 续传：直接用 DB 里的 threads 作为 chats 列表，跳过 API 调用
+      chats = existingThreads.map(t => ({
+        chat_id: t.platform_thread_id,
+        name: '', // name 不重要，已在 DB
+        chat_type: 'group',
+      }))
+      log(`续传模式: 使用已有 ${chats.length} 个会话`)
     }
 
     result.chats = chats.length
@@ -623,22 +630,28 @@ async function fullSync(userId: string) {
 
       chatIndex++
 
-      const thread = threadMap.get(chat.chat_id)!
+      const thread = threadMap.get(chat.chat_id)
+      if (!thread) continue
       const lastTs = thread.last_sync_ts || '0'
       const meta = thread.metadata || {}
       const historyDone = meta.history_done === true
-      const historyCursor = meta.history_cursor || undefined // 最老消息的时间戳（秒），用于回填
+      const historyCursor = meta.history_cursor || undefined
+
+      // 跳过已完全同步的会话（有 last_sync_ts 且历史回填完成），留给 quickSync 处理增量
+      if (lastTs !== '0' && historyDone) {
+        continue
+      }
 
       const pct = Math.round((chatIndex / sortedChats.length) * 100)
-      await log(`  [${pct}%] 同步 ${chatIndex}/${sortedChats.length}: ${chat.name}`)
+      await log(`  [${pct}%] 同步 ${chatIndex}/${sortedChats.length}: ${chat.name || thread.last_sync_ts}`)
 
       const msgStartTime = lastTs !== '0'
         ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
         : undefined
 
       try {
-        // 动态间隔：刚限流过等5s，正常1.5s（~40次/分钟，留安全余量）
-        const waitMs = consecutiveRateLimits > 0 ? 5000 : 1500
+        // 动态间隔：刚限流过等5s，正常500ms
+        const waitMs = consecutiveRateLimits > 0 ? 5000 : 500
         if (chatIndex > 1) await new Promise(r => setTimeout(r, waitMs))
 
         // ── 阶段 1：拉新消息（增量 or 首次） ──

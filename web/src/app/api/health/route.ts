@@ -3,10 +3,21 @@ import { NextResponse } from 'next/server'
 import { queryOne, exec } from '@/lib/db'
 
 async function migrate() {
-  // 给 messages 表加 sender_name 列（如果没有）
+  try { await exec(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS sender_name TEXT`) } catch {}
   try {
-    await exec(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS sender_name TEXT`)
-  } catch { /* 已存在则忽略 */ }
+    await exec(`CREATE TABLE IF NOT EXISTS skills (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      description TEXT,
+      content TEXT NOT NULL,
+      enabled INTEGER DEFAULT 1,
+      source_url TEXT,
+      metadata JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )`)
+    await exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_user_name ON skills(user_id, name)`)
+  } catch {}
 }
 
 export async function GET() {

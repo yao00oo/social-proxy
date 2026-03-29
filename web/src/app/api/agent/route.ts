@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
     return new Response('No messages', { status: 400 })
   }
 
-  const result = runAgent(userId, messages, modelId)
+  const result = await runAgent(userId, messages, modelId)
 
   const encoder = new TextEncoder()
   const stream = new ReadableStream({

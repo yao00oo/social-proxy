@@ -114,7 +114,7 @@ export default function HomePage() {
   // AI assistant — custom streaming chat with tool call tracking
   interface ToolCallInfo { name: string; args: any; result?: any }
   interface DraftInfo { to: string; content: string; platform: 'feishu' | 'email'; status: 'pending' | 'sent' | 'cancelled' }
-  interface AiMsg { id: string; role: 'user' | 'assistant' | 'tool' | 'draft'; content: string; toolCall?: ToolCallInfo; draft?: DraftInfo }
+  interface AiMsg { id: string; role: 'user' | 'assistant' | 'tool' | 'draft' | 'artifact'; content: string; toolCall?: ToolCallInfo; draft?: DraftInfo }
   const welcomeMsg: AiMsg = { id: 'welcome', role: 'assistant', content: '你好！我是小林，你的社交助理。告诉我你想给谁发什么消息，我来帮你起草。\n\n你可以试试：\n- "帮我看看最近谁没联系了"\n- "帮我给张三发消息催一下项目"\n- "搜索一下关于合同的聊天记录"' }
   const [aiMessages, setAiMessages] = useState<AiMsg[]>([welcomeMsg])
   const [aiInput, setAiInput] = useState('')
@@ -205,12 +205,23 @@ export default function HomePage() {
             }
           }
 
+          // Detect model artifacts (chain-of-thought leaks between tool calls)
+          const _isArtifact = (text: string) => {
+            if (!text.trim()) return false
+            if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1].role === 'tool' && text.trim().length < 300) {
+              const hasRealContent = /[\u4e00-\u9fff]{2,}|^[A-Z][a-z]{3,}/.test(text.trim())
+              if (!hasRealContent) return true
+            }
+            if (/place__holder__|<\s*\|[^|]*\|\s*>/.test(text)) return true
+            return false
+          }
+
           // Split text into real content vs artifacts
           const lines = cleanedText.split('\n')
           let realContent = ''
           let artifactContent = ''
           for (const line of lines) {
-            if (isArtifact(line)) {
+            if (_isArtifact(line)) {
               artifactContent += line + '\n'
             } else {
               realContent += line + '\n'
@@ -287,18 +298,7 @@ export default function HomePage() {
 
           // No more markers — remaining buffer could be partial marker or text
           // Only flush text up to last \n to avoid cutting a partial @@TOOL:...@@
-          // Detect model artifacts (chain-of-thought leaks between tool calls)
-          const isArtifact = (text: string) => {
-            if (!text.trim()) return false
-            // After a tool call, short text without real content is likely an artifact
-            if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1].role === 'tool' && text.trim().length < 300) {
-              const hasRealContent = /[\u4e00-\u9fff]{2,}|^[A-Z][a-z]{3,}/.test(text.trim())
-              if (!hasRealContent) return true
-            }
-            // Known placeholder patterns
-            if (/place__holder__|<\s*\|[^|]*\|\s*>/.test(text)) return true
-            return false
-          }
+          // (isArtifact moved above)
           const cleanBuffer = (text: string) => text
             .replace(/<\s*\|[^|]*\|\s*>/g, '')
             .replace(/place__holder__\w+/g, '')
