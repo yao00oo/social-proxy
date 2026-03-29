@@ -914,68 +914,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Section: 技能 */}
-        <div className="mb-8">
-          <SectionHeader icon="extension" title="技能" badge={`${skills.length} 个已安装`} />
-          <div className="bg-white rounded-2xl p-5 ambient-shadow ghost-border">
-            <p className="text-sm text-outline mb-4">已安装的技能让小林能做更多事情</p>
-            <div className="grid grid-cols-3 gap-3">
-              {skills.map(sk => (
-                <div key={sk.id} className="bg-surface-container-highest/30 rounded-xl p-3 flex flex-col justify-between h-[90px]">
-                  <div>
-                    <p className="text-sm font-medium text-on-surface truncate">{sk.name}</p>
-                    <p className="text-xs text-outline mt-0.5 truncate">{sk.description || '无描述'}</p>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-teal-700 flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-teal-500 inline-block" /> 已安装
-                    </span>
-                    <button onClick={async () => {
-                      if (!confirm('确定卸载？')) return
-                      await fetch(`/api/skills?id=${sk.id}`, { method: 'DELETE' })
-                      setSkills(prev => prev.filter(s => s.id !== sk.id))
-                    }} className="text-xs text-outline hover:text-error cursor-pointer">卸载</button>
-                  </div>
-                </div>
-              ))}
-              <div onClick={() => setShowInstallSkill(!showInstallSkill)}
-                className="border-2 border-dashed border-outline-variant/30 rounded-xl p-3 flex flex-col items-center justify-center h-[90px] cursor-pointer hover:border-primary/30 hover:bg-primary-fixed/5 transition-all">
-                <span className="material-symbols-outlined text-2xl text-outline">add</span>
-                <span className="text-xs text-outline mt-1">安装技能</span>
-              </div>
-            </div>
-            {showInstallSkill && (
-              <div className="mt-4 bg-surface-container-highest/20 rounded-xl p-4 space-y-3">
-                <p className="text-sm font-medium text-on-surface">从 URL 安装</p>
-                <div className="flex gap-2">
-                  <input type="text" value={skillUrl} onChange={e => setSkillUrl(e.target.value)}
-                    placeholder="https://github.com/.../SKILL.md"
-                    className="flex-1 bg-white border border-outline-variant/30 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-primary" />
-                  <button onClick={async () => {
-                    if (!skillUrl.trim()) return
-                    setSkillInstalling(true)
-                    const res = await fetch('/api/skills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: skillUrl }) }).then(r => r.json())
-                    setSkillInstalling(false)
-                    if (res.ok) { setSkillUrl(''); setShowInstallSkill(false); fetch('/api/skills').then(r => r.json()).then(data => setSkills(data.skills || [])) }
-                    else alert(res.error || '安装失败')
-                  }} disabled={skillInstalling}
-                    className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary/90 disabled:opacity-50 cursor-pointer">
-                    {skillInstalling ? '安装中...' : '安装'}</button>
-                </div>
-                <div className="pt-2 border-t border-outline-variant/10">
-                  <p className="text-xs text-outline mb-2">推荐技能：</p>
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-on-surface">larksuite/cli — <span className="text-outline">飞书全功能（消息/文档/日历/任务）</span></span>
-                      <button onClick={() => setSkillUrl('https://raw.githubusercontent.com/larksuite/cli/main/skills/lark-im/SKILL.md')} className="text-primary cursor-pointer hover:underline">使用</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* Section 1: 数据源 */}
         <div className="mb-8">
           <SectionHeader icon="database" title="数据源" />
@@ -1357,6 +1295,68 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* Section: 技能 */}
+        <div className="mb-8">
+          <SectionHeader icon="extension" title="技能" badge={`${skills.length} 个已安装`} />
+          <div className="bg-white rounded-2xl p-5 ambient-shadow ghost-border">
+            <p className="text-sm text-outline mb-4">已安装的技能让小林能做更多事情。你也可以在小林对话里说"安装 xxx 技能"。</p>
+            <div className="grid grid-cols-3 gap-3">
+              {skills.map(sk => (
+                <div key={sk.id} className="bg-surface-container-highest/30 rounded-xl p-3 flex flex-col justify-between h-[90px]">
+                  <div>
+                    <p className="text-sm font-medium text-on-surface truncate">{sk.name}</p>
+                    <p className="text-xs text-outline mt-0.5 truncate">{sk.description || '无描述'}</p>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-teal-700 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-teal-500 inline-block" /> 已安装
+                    </span>
+                    <button onClick={async () => {
+                      if (!confirm('确定卸载？')) return
+                      await fetch(`/api/skills?id=${sk.id}`, { method: 'DELETE' })
+                      setSkills(prev => prev.filter(s => s.id !== sk.id))
+                    }} className="text-xs text-outline hover:text-error cursor-pointer">卸载</button>
+                  </div>
+                </div>
+              ))}
+              <div onClick={() => setShowInstallSkill(!showInstallSkill)}
+                className="border-2 border-dashed border-outline-variant/30 rounded-xl p-3 flex flex-col items-center justify-center h-[90px] cursor-pointer hover:border-primary/30 hover:bg-primary-fixed/5 transition-all">
+                <span className="material-symbols-outlined text-2xl text-outline">add</span>
+                <span className="text-xs text-outline mt-1">安装技能</span>
+              </div>
+            </div>
+            {showInstallSkill && (
+              <div className="mt-4 bg-surface-container-highest/20 rounded-xl p-4 space-y-3">
+                <p className="text-sm font-medium text-on-surface">从 URL 安装</p>
+                <div className="flex gap-2">
+                  <input type="text" value={skillUrl} onChange={e => setSkillUrl(e.target.value)}
+                    placeholder="https://github.com/.../SKILL.md"
+                    className="flex-1 bg-white border border-outline-variant/30 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-primary" />
+                  <button onClick={async () => {
+                    if (!skillUrl.trim()) return
+                    setSkillInstalling(true)
+                    const res = await fetch('/api/skills', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: skillUrl }) }).then(r => r.json())
+                    setSkillInstalling(false)
+                    if (res.ok) { setSkillUrl(''); setShowInstallSkill(false); fetch('/api/skills').then(r => r.json()).then(data => setSkills(data.skills || [])) }
+                    else alert(res.error || '安装失败')
+                  }} disabled={skillInstalling}
+                    className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary/90 disabled:opacity-50 cursor-pointer">
+                    {skillInstalling ? '安装中...' : '安装'}</button>
+                </div>
+                <div className="pt-2 border-t border-outline-variant/10">
+                  <p className="text-xs text-outline mb-2">推荐技能：</p>
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-on-surface">larksuite/cli — <span className="text-outline">飞书全功能（消息/文档/日历/任务）</span></span>
+                      <button onClick={() => setSkillUrl('https://raw.githubusercontent.com/larksuite/cli/main/skills/lark-im/SKILL.md')} className="text-primary cursor-pointer hover:underline">使用</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Section 2: 让小林帮你发送消息 */}

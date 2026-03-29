@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   const params = new URLSearchParams({
     app_id: appId,
     redirect_uri: REDIRECT_URI,
-    scope: 'im:chat:readonly im:message:readonly im:message.group_msg:get_as_user im:message.p2p_msg:get_as_user search:message drive:drive:readonly docx:document:readonly',
+    scope: 'im:chat:readonly im:message:readonly im:message.group_msg:get_as_user im:message.p2p_msg:get_as_user search:message drive:drive:readonly docx:document:readonly approval:approval:readonly contact:user.email:readonly contact:user.phone:readonly',
     state,
   })
   const authUrl = `https://open.feishu.cn/open-apis/authen/v1/authorize?${params}`

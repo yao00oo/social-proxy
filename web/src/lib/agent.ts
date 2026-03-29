@@ -595,6 +595,49 @@ npm install -g social-proxy-mcp
     },
   },
 
+  install_skill: {
+    description: '安装一个技能。当用户说"安装 xxx 技能"或提供 SKILL.md URL 时调用。',
+    parameters: z.object({
+      url: z.string().optional().describe('SKILL.md 的 URL（GitHub raw URL 等）'),
+      name: z.string().optional().describe('技能名称（如果用户没给 URL，用名称搜索推荐）'),
+      content: z.string().optional().describe('SKILL.md 的完整内容（如果用户直接粘贴）'),
+    }),
+    execute: async ({ url, name, content }: { url?: string; name?: string; content?: string }) => {
+      if (!url && !content) {
+        // 没有 URL 也没有内容，返回推荐
+        return {
+          message: '请提供技能的 SKILL.md URL，或者选择推荐技能：',
+          recommendations: [
+            { name: 'lark-im', desc: '飞书消息管理', url: 'https://raw.githubusercontent.com/larksuite/cli/main/skills/lark-im/SKILL.md' },
+            { name: 'lark-calendar', desc: '飞书日历管理', url: 'https://raw.githubusercontent.com/larksuite/cli/main/skills/lark-calendar/SKILL.md' },
+            { name: 'lark-task', desc: '飞书任务管理', url: 'https://raw.githubusercontent.com/larksuite/cli/main/skills/lark-task/SKILL.md' },
+          ],
+        }
+      }
+
+      try {
+        const body: any = {}
+        if (url) body.url = url
+        else if (content) { body.content = content; if (name) body.name = name }
+
+        // 调内部 API 安装
+        const res = await fetch(`${process.env.NEXTAUTH_URL || 'https://botook.ai'}/api/skills`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const data = await res.json()
+        if (data.ok) {
+          return { success: true, message: `✅ 技能 "${data.skill?.name}" 安装成功！你可以试试用它了。` }
+        } else {
+          return { success: false, message: `安装失败: ${data.error}` }
+        }
+      } catch (e: any) {
+        return { success: false, message: `安装出错: ${e.message}` }
+      }
+    },
+  },
+
   use_skill: {
     description: '加载并执行已安装的技能。当用户的请求匹配某个技能的描述时调用。',
     parameters: z.object({
