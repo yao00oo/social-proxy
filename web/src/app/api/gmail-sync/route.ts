@@ -1,4 +1,4 @@
-// POST /api/gmail-sync — 用 Gmail API 同步邮件到本地数据库（统一 schema）
+// POST /api/gmail-sync — Gmail 邮件同步（支持续传，全量拉取）
 // GET  /api/gmail-sync — 查询同步状态
 import { NextResponse } from 'next/server'
 import { query, queryOne, exec } from '@/lib/db'
@@ -35,7 +35,6 @@ async function ensureToken(channelId: number): Promise<string> {
   const expiresIn = parseInt(creds.expires_in || '3600')
   const refreshToken = creds.refresh_token || ''
 
-  // 提前 5 分钟刷新
   if (Date.now() - tokenTime > (expiresIn - 300) * 1000 && refreshToken) {
     log('刷新 Gmail token...')
     const clientId = process.env.GMAIL_CLIENT_ID || creds.client_id || ''
@@ -87,19 +86,35 @@ function getHeader(msg: GmailMessage, name: string): string {
   return msg.payload.headers.find(h => h.name.toLowerCase() === name.toLowerCase())?.value || ''
 }
 
+// 解析邮件地址，支持 "Name <email>" 和纯 email，多收件人取第一个
 function parseAddress(raw: string): { name: string; email: string } {
-  const match = raw.match(/^"?(.+?)"?\s*<(.+?)>$/)
-  if (match) return { name: match[1].trim(), email: match[2].trim() }
-  const emailOnly = raw.trim()
+  if (!raw) return { name: 'unknown', email: '' }
+  // 多个地址取第一个
+  const first = raw.split(',')[0].trim()
+  const match = first.match(/^"?(.+?)"?\s*<(.+?)>$/)
+  if (match) return { name: match[1].trim(), email: match[2].trim().toLowerCase() }
+  const emailOnly = first.trim().toLowerCase()
   return { name: emailOnly.split('@')[0], email: emailOnly }
 }
 
 function decodeBody(msg: GmailMessage): string {
-  const parts = msg.payload.parts || []
-  for (const part of parts) {
-    if (part.mimeType === 'text/plain' && part.body?.data) {
-      return Buffer.from(part.body.data, 'base64url').toString('utf-8').trim()
+  // 递归查找 text/plain
+  function findTextPart(parts: any[]): string {
+    for (const part of parts) {
+      if (part.mimeType === 'text/plain' && part.body?.data) {
+        return Buffer.from(part.body.data, 'base64url').toString('utf-8').trim()
+      }
+      if (part.parts) {
+        const found = findTextPart(part.parts)
+        if (found) return found
+      }
     }
+    return ''
+  }
+
+  if (msg.payload.parts) {
+    const found = findTextPart(msg.payload.parts)
+    if (found) return found
   }
   if (msg.payload.body?.data) {
     return Buffer.from(msg.payload.body.data, 'base64url').toString('utf-8').trim()
@@ -107,13 +122,16 @@ function decodeBody(msg: GmailMessage): string {
   return ''
 }
 
-// 拉取全部邮件 ID（不限数量）
+// 拉取全部邮件 ID（分页，不限数量）
 async function fetchAllMessageIds(token: string, q: string): Promise<string[]> {
   const ids: string[] = []
   let pageToken = ''
+  let page = 0
 
   while (true) {
-    const params = new URLSearchParams({ q, maxResults: '500' })
+    page++
+    const params = new URLSearchParams({ maxResults: '500' })
+    if (q) params.set('q', q)
     if (pageToken) params.set('pageToken', pageToken)
 
     const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages?${params}`, {
@@ -122,7 +140,10 @@ async function fetchAllMessageIds(token: string, q: string): Promise<string[]> {
     const data = await res.json()
     if (data.error) throw new Error(`Gmail API: ${data.error.message}`)
 
-    for (const m of data.messages || []) ids.push(m.id)
+    const msgs = data.messages || []
+    for (const m of msgs) ids.push(m.id)
+    log(`  第 ${page} 页: ${msgs.length} 封 (累计 ${ids.length})`)
+
     if (!data.nextPageToken) break
     pageToken = data.nextPageToken
   }
@@ -130,14 +151,51 @@ async function fetchAllMessageIds(token: string, q: string): Promise<string[]> {
   return ids
 }
 
-async function fetchMessage(token: string, id: string): Promise<GmailMessage> {
-  const res = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, {
-    headers: { Authorization: `Bearer ${token}` },
+// 批量获取邮件详情（Gmail batch API）
+async function fetchMessagesBatch(token: string, ids: string[]): Promise<GmailMessage[]> {
+  // Gmail batch API: 一次最多 100 个请求
+  const boundary = 'batch_gmail_sync'
+  let body = ''
+  for (const id of ids) {
+    body += `--${boundary}\r\n`
+    body += `Content-Type: application/http\r\n\r\n`
+    body += `GET /gmail/v1/users/me/messages/${id}?format=full\r\n\r\n`
+  }
+  body += `--${boundary}--\r\n`
+
+  const res = await fetch('https://www.googleapis.com/batch/gmail/v1', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': `multipart/mixed; boundary=${boundary}`,
+    },
+    body,
   })
-  return res.json()
+
+  const responseText = await res.text()
+  const messages: GmailMessage[] = []
+
+  // 解析 multipart 响应
+  const responseBoundary = res.headers.get('content-type')?.match(/boundary=(.+)/)?.[1] || ''
+  const parts = responseText.split(`--${responseBoundary}`).filter(p => p.trim() && p.trim() !== '--')
+
+  for (const part of parts) {
+    // 每个 part 里面有 HTTP 响应头和 JSON body
+    const jsonMatch = part.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      try {
+        const msg = JSON.parse(jsonMatch[0])
+        if (msg.id && msg.payload) {
+          messages.push(msg)
+        }
+      } catch {}
+    }
+  }
+
+  return messages
 }
 
-const TIMEOUT_MS = 50_000 // Vercel 60s 超时，留 10s 余量
+const TIMEOUT_MS = 50_000
 
 export async function POST() {
   const userId = await getUserId()
@@ -163,30 +221,26 @@ export async function POST() {
 
         const credRow = await queryOne<{ credentials: any }>('SELECT credentials FROM channels WHERE id = ?', [channelId])
         const creds = credRow?.credentials || {}
-        let myEmail = creds.email || ''
-        if (!myEmail) {
-          const settingRow = await queryOne<{ value: string }>("SELECT value FROM settings WHERE key='gmail_email' AND user_id = ?", [userId])
-          myEmail = settingRow?.value || ''
-        }
+        const myEmail = (creds.email || '').toLowerCase()
 
         // 读取同步进度
         const syncStateRow = await queryOne<{ sync_state: any }>('SELECT sync_state FROM channels WHERE id = ?', [channelId])
         const syncState = syncStateRow?.sync_state || {}
         const lastSyncTs = parseInt(syncState.last_sync_ts || '0')
-        // pending_ids: 上轮没处理完的邮件 ID 列表
         let pendingIds: string[] = syncState.pending_ids || []
 
-        // 如果没有待处理的 ID，先拉取邮件列表
+        // 如果没有待处理的 ID，拉取邮件列表
         if (pendingIds.length === 0) {
-          let gmailQuery = 'in:inbox OR in:sent'
+          // 不限制 in:inbox OR in:sent，拉取所有邮件
+          let gmailQuery = ''
           if (lastSyncTs > 0) {
             const afterDate = new Date(lastSyncTs).toISOString().slice(0, 10).replace(/-/g, '/')
-            gmailQuery = `(in:inbox OR in:sent) after:${afterDate}`
+            gmailQuery = `after:${afterDate}`
           }
 
-          log(`搜索邮件: ${gmailQuery}`)
+          log(gmailQuery ? `搜索新邮件: ${gmailQuery}` : '搜索全部邮件...')
           pendingIds = await fetchAllMessageIds(token, gmailQuery)
-          log(`找到 ${pendingIds.length} 封邮件`)
+          log(`共找到 ${pendingIds.length} 封邮件`)
 
           if (pendingIds.length === 0) {
             lastResult = { imported: 0, skipped: 0, total: 0, done: true }
@@ -199,77 +253,103 @@ export async function POST() {
 
         const totalCount = pendingIds.length
         const threadCache = new Map<string, number>()
-        let imported = 0, skipped = 0
+        let imported = 0, skipped = 0, errors = 0, selfSkipped = 0
         let maxTs = lastSyncTs
         let timedOut = false
+        let processed = 0
 
-        for (let i = 0; i < pendingIds.length; i++) {
-          // 超时保护
+        // 分批处理，每批 50 封（用 batch API）
+        const BATCH_SIZE = 50
+
+        while (pendingIds.length > 0) {
           if (Date.now() - startTime > TIMEOUT_MS) {
             timedOut = true
-            pendingIds = pendingIds.slice(i)
-            log(`⏱ 接近超时，已处理 ${i}/${totalCount}，剩余 ${pendingIds.length} 封待续传`)
+            log(`⏱ 接近超时，已处理 ${processed}/${totalCount}，剩余 ${pendingIds.length} 封待续传`)
             break
           }
 
-          if (i > 0 && i % 50 === 0) log(`  处理中... ${i}/${totalCount}`)
+          const batchIds = pendingIds.slice(0, BATCH_SIZE)
+          pendingIds = pendingIds.slice(BATCH_SIZE)
 
+          let messages: GmailMessage[]
           try {
-            const msg = await fetchMessage(token, pendingIds[i])
-            const ts = parseInt(msg.internalDate)
-            const timestamp = new Date(ts).toISOString()
-            const subject = getHeader(msg, 'Subject') || '(无主题)'
-            const from = parseAddress(getHeader(msg, 'From'))
-            const to = parseAddress(getHeader(msg, 'To'))
-            const cc = getHeader(msg, 'Cc')
-
-            const isSent = (msg.labelIds || []).includes('SENT')
-            const direction: 'sent' | 'received' = isSent ? 'sent' : 'received'
-            const contact = isSent ? to : from
-
-            if (contact.email === myEmail) { skipped++; continue }
-
-            const body = decodeBody(msg)
-            const preview = body ? body.slice(0, 200) : ''
-            const content = preview
-              ? `[邮件] 主题: ${subject}\n${preview}`
-              : `[邮件] 主题: ${subject}`
-
-            let threadId: number
-            if (threadCache.has(msg.threadId)) {
-              threadId = threadCache.get(msg.threadId)!
-            } else {
-              const thread = await getOrCreateThread(userId, channelId, msg.threadId, subject, 'email_thread')
-              threadId = thread.id
-              threadCache.set(msg.threadId, threadId)
-            }
-
-            const contactRecord = await getOrCreateContact(userId, contact.name)
-            await getOrCreateContactIdentity(contactRecord.id, channelId, contact.email, contact.name, contact.email)
-
-            const inserted = await insertUnifiedMessage(userId, threadId, channelId, {
-              direction,
-              senderName: isSent ? '我' : contact.name,
-              content,
-              msgType: 'email',
-              timestamp,
-              platformMsgId: msg.id,
-              metadata: { subject, to: to.email, cc: cc || undefined, from: from.email },
-            })
-
-            if (inserted) {
-              imported++
-              await updateContactStats(userId, contact.name, timestamp)
-            } else {
-              skipped++
-            }
-
-            if (ts > maxTs) maxTs = ts
+            messages = await fetchMessagesBatch(token, batchIds)
           } catch (e: any) {
-            skipped++
+            log(`  批量获取失败: ${e.message}，跳过 ${batchIds.length} 封`)
+            errors += batchIds.length
+            processed += batchIds.length
+            continue
           }
 
-          if (i > 0 && i % 20 === 0) await new Promise(r => setTimeout(r, 100))
+          // 建立 ID → message 映射，没拿到的算 error
+          const msgMap = new Map<string, GmailMessage>()
+          for (const m of messages) msgMap.set(m.id, m)
+          errors += batchIds.length - messages.length
+
+          for (const id of batchIds) {
+            processed++
+            const msg = msgMap.get(id)
+            if (!msg) continue
+
+            try {
+              const ts = parseInt(msg.internalDate)
+              const timestamp = new Date(ts).toISOString()
+              const subject = getHeader(msg, 'Subject') || '(无主题)'
+              const from = parseAddress(getHeader(msg, 'From'))
+              const to = parseAddress(getHeader(msg, 'To'))
+              const cc = getHeader(msg, 'Cc')
+
+              const isSent = (msg.labelIds || []).includes('SENT')
+              const direction: 'sent' | 'received' = isSent ? 'sent' : 'received'
+              const contact = isSent ? to : from
+
+              // 跳过自己发给自己
+              if (contact.email === myEmail) { selfSkipped++; continue }
+              // 跳过空地址
+              if (!contact.email) { skipped++; continue }
+
+              const body = decodeBody(msg)
+              const preview = body ? body.slice(0, 200) : ''
+              const content = preview
+                ? `[邮件] 主题: ${subject}\n${preview}`
+                : `[邮件] 主题: ${subject}`
+
+              let threadId: number
+              if (threadCache.has(msg.threadId)) {
+                threadId = threadCache.get(msg.threadId)!
+              } else {
+                const thread = await getOrCreateThread(userId, channelId, msg.threadId, subject, 'email_thread')
+                threadId = thread.id
+                threadCache.set(msg.threadId, threadId)
+              }
+
+              const contactRecord = await getOrCreateContact(userId, contact.name)
+              await getOrCreateContactIdentity(contactRecord.id, channelId, contact.email, contact.name, contact.email)
+
+              const inserted = await insertUnifiedMessage(userId, threadId, channelId, {
+                direction,
+                senderName: isSent ? '我' : contact.name,
+                content,
+                msgType: 'email',
+                timestamp,
+                platformMsgId: msg.id,
+                metadata: { subject, to: to.email, cc: cc || undefined, from: from.email },
+              })
+
+              if (inserted) {
+                imported++
+                await updateContactStats(userId, contact.name, timestamp)
+              } else {
+                skipped++ // 已存在
+              }
+
+              if (ts > maxTs) maxTs = ts
+            } catch (e: any) {
+              errors++
+            }
+          }
+
+          log(`  处理 ${processed}/${totalCount}: 导入 ${imported}, 已存在 ${skipped}, 自发自 ${selfSkipped}, 错误 ${errors}`)
         }
 
         // 保存同步进度
@@ -277,20 +357,17 @@ export async function POST() {
         if (maxTs > lastSyncTs) newSyncState.last_sync_ts = maxTs.toString()
 
         if (timedOut) {
-          // 保存未处理完的 ID 列表，下次续传
           newSyncState.pending_ids = pendingIds
         } else {
-          // 全部处理完，清除 pending
           delete newSyncState.pending_ids
-          pendingIds = []
         }
 
         await exec('UPDATE channels SET sync_state = ?::jsonb WHERE id = ?', [JSON.stringify(newSyncState), channelId])
 
         const done = !timedOut
-        lastResult = { imported, skipped, total: totalCount, done, remaining: timedOut ? pendingIds.length : 0 }
-        log(`\n${channel.name} 同步${done ? '完成' : '暂停'}: 导入 ${imported} 封，跳过 ${skipped} 封${timedOut ? `，剩余 ${pendingIds.length} 封` : ''}`)
-      } // end for gmailChannels
+        lastResult = { imported, skipped, selfSkipped, errors, total: totalCount, done, remaining: timedOut ? pendingIds.length : 0 }
+        log(`\n${channel.name} 同步${done ? '完成' : '暂停'}: 导入 ${imported}, 已存在 ${skipped}, 自发自 ${selfSkipped}, 错误 ${errors}${timedOut ? `, 剩余 ${pendingIds.length}` : ''}`)
+      }
     } catch (e: any) {
       log(`同步失败: ${e.message}`)
       lastResult = { error: e.message }
