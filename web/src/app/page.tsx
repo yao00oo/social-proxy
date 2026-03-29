@@ -310,31 +310,45 @@ export default function HomePage() {
 
     let stopped = false
 
-    // 检查是否还有未同步的群，有则自动 fullSync 续传
     const autoSync = async () => {
-      try {
-        const statusRes = await fetch('/api/sync-status').then(r => r.json())
-        const synced = statusRes?.feishu?.syncedChats || 0
-        const total = statusRes?.feishu?.totalChats || 0
+      while (!stopped) {
+        try {
+          const statusRes = await fetch('/api/sync-status').then(r => r.json())
+          const synced = statusRes?.feishu?.syncedChats || 0
+          const total = statusRes?.feishu?.totalChats || 0
+          const hasMore = statusRes?.feishu?.lastResult?.hasMoreHistory
 
-        if (total > 0 && synced < total && !stopped) {
-          // 还有未同步的群，触发 fullSync
-          await fetch('/api/feishu-sync', { method: 'POST' }).catch(() => {})
-        } else if (!stopped) {
-          // 全部同步完，quickSync 拉增量
-          await fetch('/api/feishu-sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ quick: true }),
-          }).catch(() => {})
+          if (total > 0 && (synced < total || hasMore) && !stopped) {
+            // 还有未同步的群或大群没拉完，持续 fullSync
+            await fetch('/api/feishu-sync', { method: 'POST' }).catch(() => {})
+            // 短暂等待后继续下一轮
+            await new Promise(r => setTimeout(r, 2000))
+          } else {
+            // 全部同步完，切换到 60 秒增量模式
+            break
+          }
+        } catch {
+          await new Promise(r => setTimeout(r, 5000))
         }
-      } catch {}
+      }
     }
 
-    // 立即检查一次，然后每 60 秒检查
-    autoSync()
-    const iv = setInterval(autoSync, 60000)
-    return () => { stopped = true; clearInterval(iv) }
+    // 先跑完 fullSync 续传，然后切到 quickSync
+    autoSync().then(() => {
+      if (stopped) return
+      // 全部同步完，每 60 秒 quickSync
+      const iv = setInterval(() => {
+        if (stopped) return
+        fetch('/api/feishu-sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quick: true }),
+        }).catch(() => {})
+      }, 60000)
+      return () => clearInterval(iv)
+    })
+
+    return () => { stopped = true }
   }, [status])
 
   // ---------- Load real contact history ----------
