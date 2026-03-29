@@ -218,7 +218,16 @@ export async function POST() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
+  // 内存锁（同实例）
   if (syncRunning && (Date.now() - syncStartedAt < 65000)) {
+    return NextResponse.json({ error: '同步中' }, { status: 409 })
+  }
+  // DB 锁（跨实例）
+  const dbStatusCheck = await queryOne<{ value: string }>(
+    "SELECT value FROM settings WHERE key = 'gmail_sync_status' AND user_id = ?", [userId]
+  )
+  const dbCheck = dbStatusCheck?.value ? JSON.parse(dbStatusCheck.value) : {}
+  if (dbCheck.running && dbCheck.updatedAt && (Date.now() - dbCheck.updatedAt < 90000)) {
     return NextResponse.json({ error: '同步中' }, { status: 409 })
   }
 
@@ -291,24 +300,24 @@ export async function POST() {
           }
 
           const batchIds = pendingIds.slice(0, BATCH_SIZE)
-          pendingIds = pendingIds.slice(BATCH_SIZE)
 
           let messages: GmailMessage[]
           try {
             const result = await fetchMessagesConcurrent(token, batchIds)
             messages = result.messages
             errors += result.errors
+            // 成功获取后才从 pendingIds 移除
+            pendingIds = pendingIds.slice(BATCH_SIZE)
           } catch (e: any) {
-            log(`  获取失败: ${e.message}，跳过 ${batchIds.length} 封`)
-            errors += batchIds.length
-            processed += batchIds.length
-            continue
+            // 获取失败，保留 batchIds 在 pendingIds 中，下轮重试
+            log(`  获取失败: ${e.message}，${batchIds.length} 封将在下轮重试`)
+            timedOut = true // 触发保存 pendingIds
+            break
           }
 
-          processed += batchIds.length // 整批算已处理
+          processed += batchIds.length
 
           for (const msg of messages) {
-
             try {
               const ts = parseInt(msg.internalDate)
               const timestamp = new Date(ts).toISOString()
@@ -321,9 +330,7 @@ export async function POST() {
               const direction: 'sent' | 'received' = isSent ? 'sent' : 'received'
               const contact = isSent ? to : from
 
-              // 跳过自己发给自己
               if (contact.email === myEmail) { selfSkipped++; continue }
-              // 跳过空地址
               if (!contact.email) { skipped++; continue }
 
               const body = decodeBody(msg)
@@ -357,11 +364,13 @@ export async function POST() {
               if (inserted) {
                 imported++
                 await updateContactStats(userId, contact.name, timestamp)
+                // #3 修复：只在成功插入时更新 maxTs，避免跳过未处理的消息
+                if (ts > maxTs) maxTs = ts
               } else {
-                skipped++ // 已存在
+                skipped++
+                // 已存在的消息也要更新 maxTs（它们已经在 DB 里了）
+                if (ts > maxTs) maxTs = ts
               }
-
-              if (ts > maxTs) maxTs = ts
             } catch (e: any) {
               errors++
             }

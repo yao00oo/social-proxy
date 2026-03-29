@@ -793,6 +793,16 @@ async function fullSync(userId: string) {
 
 // ── Quick sync (for auto-sync, only recent chats) ──
 async function quickSync(userId: string) {
+  // 检查 fullSync 是否在跑，避免争抢 API 限额
+  const statusRow = await queryOne<{ value: string }>(
+    "SELECT value FROM settings WHERE key = 'feishu_sync_status' AND user_id = ?", [userId]
+  )
+  const syncStatus = statusRow?.value ? JSON.parse(statusRow.value) : {}
+  if (syncStatus.running && syncStatus.updatedAt && (Date.now() - syncStatus.updatedAt < 90000)) {
+    console.log('[feishu-quick-sync] fullSync 运行中，跳过')
+    return
+  }
+
   const log = (msg: string) => {
     console.log(`[feishu-quick-sync] ${msg}`)
     syncLog.push(msg)
@@ -957,7 +967,16 @@ export async function POST(req: Request) {
   }
 
   // Mode 4: Trigger full sync（用 after() 后台执行，POST 立刻返回）
+  // 内存锁（同实例）
   if (syncRunning && (Date.now() - syncStartedAt < 65000)) {
+    return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
+  }
+  // DB 锁（跨实例）— 检查是否有其他实例在跑
+  const dbStatusCheck = await queryOne<{ value: string }>(
+    "SELECT value FROM settings WHERE key = 'feishu_sync_status' AND user_id = ?", [userId]
+  )
+  const dbCheck = dbStatusCheck?.value ? JSON.parse(dbStatusCheck.value) : {}
+  if (dbCheck.running && dbCheck.updatedAt && (Date.now() - dbCheck.updatedAt < 90000)) {
     return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
   }
 
