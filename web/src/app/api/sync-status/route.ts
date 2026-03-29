@@ -1,7 +1,7 @@
 // GET /api/sync-status — 返回所有数据源的同步状态（统一多平台模型）
 import { NextResponse } from 'next/server'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
-import { queryOne, query } from '@/lib/db'
+import { queryOne, query, exec } from '@/lib/db'
 
 export async function GET() {
   const userId = await getUserId()
@@ -44,6 +44,19 @@ export async function GET() {
        (SELECT COUNT(*) FROM contacts WHERE user_id = ?) as contacts`,
     [userId, userId]
   )
+
+  // 超时自动解锁：如果 running 超过 90 秒，说明 Vercel 进程被杀了，重置状态
+  if (feishu?.running && feishu?.updatedAt) {
+    const age = Date.now() - feishu.updatedAt
+    if (age > 90000) {
+      feishu.running = false
+      feishu.status = feishu.lastResult?.done ? 'completed' : 'paused'
+      await exec(
+        `UPDATE settings SET value = ? WHERE key = 'feishu_sync_status' AND user_id = ?`,
+        [JSON.stringify(feishu), userId],
+      )
+    }
+  }
 
   // status: idle | syncing | paused | error | completed | completed_with_errors | not_connected
   let feishuStatus = feishu?.status || 'idle'

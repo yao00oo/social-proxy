@@ -516,7 +516,7 @@ async function fullSync(userId: string) {
       await exec(
         `INSERT INTO settings(user_id, key, value) VALUES(?, 'feishu_sync_status', ?)
          ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
-        [userId, JSON.stringify({ status: 'syncing', running: true, log: syncLog.slice(-50), lastResult: lastResult })]
+        [userId, JSON.stringify({ status: 'syncing', running: true, log: syncLog.slice(-50), lastResult: lastResult, updatedAt: Date.now() })]
       )
     } catch {}
   }
