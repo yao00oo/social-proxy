@@ -372,7 +372,7 @@ export default function HomePage() {
     if (status !== 'authenticated') return
     const load = () => fetch('/api/sync-status').then(r => r.json()).then(setSyncStatus).catch(() => {})
     load()
-    const iv = setInterval(load, 5000)
+    const iv = setInterval(load, 15000)
     return () => clearInterval(iv)
   }, [status])
 
@@ -381,6 +381,19 @@ export default function HomePage() {
     if (status !== 'authenticated') return
 
     let stopped = false
+
+    // 轮询等待同步完成，而不是盲等固定时间
+    const waitForSyncDone = async (maxWait = 75000) => {
+      const start = Date.now()
+      while (!stopped && Date.now() - start < maxWait) {
+        await new Promise(r => setTimeout(r, 5000))
+        try {
+          const s = await fetch('/api/sync-status').then(r => r.json())
+          setSyncStatus(s)
+          if (!s?.feishu?.running) return
+        } catch {}
+      }
+    }
 
     const autoSync = async () => {
       // 延迟 10 秒再开始自动同步，让页面先加载完
@@ -392,21 +405,20 @@ export default function HomePage() {
         rounds++
         try {
           const statusRes = await fetch('/api/sync-status').then(r => r.json())
+          setSyncStatus(statusRes)
           const synced = statusRes?.feishu?.syncedChats || 0
           const total = statusRes?.feishu?.totalChats || 0
           const isRunning = statusRes?.feishu?.running
           const hasMore = statusRes?.feishu?.lastResult?.hasMoreHistory
 
-          // 如果已经在跑，等它跑完再决定
           if (isRunning) {
-            await new Promise(r => setTimeout(r, 10000))
+            await waitForSyncDone()
             continue
           }
 
           if (total > 0 && (synced < total || hasMore) && !stopped) {
             await fetch('/api/feishu-sync', { method: 'POST' }).catch(() => {})
-            // 等同步跑完（最多 70 秒）
-            await new Promise(r => setTimeout(r, 70000))
+            await waitForSyncDone()
           } else {
             break
           }
@@ -416,11 +428,13 @@ export default function HomePage() {
       }
     }
 
+    let quickSyncInterval: ReturnType<typeof setInterval> | null = null
+
     // 先跑完 fullSync 续传，然后切到 quickSync
     autoSync().then(() => {
       if (stopped) return
       // 全部同步完，每 60 秒 quickSync
-      const iv = setInterval(() => {
+      quickSyncInterval = setInterval(() => {
         if (stopped) return
         fetch('/api/feishu-sync', {
           method: 'POST',
@@ -428,10 +442,12 @@ export default function HomePage() {
           body: JSON.stringify({ quick: true }),
         }).catch(() => {})
       }, 60000)
-      return () => clearInterval(iv)
     })
 
-    return () => { stopped = true }
+    return () => {
+      stopped = true
+      if (quickSyncInterval) clearInterval(quickSyncInterval)
+    }
   }, [status])
 
   // ---------- Load real contact history ----------
