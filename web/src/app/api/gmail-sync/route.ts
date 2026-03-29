@@ -151,48 +151,31 @@ async function fetchAllMessageIds(token: string, q: string): Promise<string[]> {
   return ids
 }
 
-// 批量获取邮件详情（Gmail batch API）
-async function fetchMessagesBatch(token: string, ids: string[]): Promise<GmailMessage[]> {
-  // Gmail batch API: 一次最多 100 个请求
-  const boundary = 'batch_gmail_sync'
-  let body = ''
-  for (const id of ids) {
-    body += `--${boundary}\r\n`
-    body += `Content-Type: application/http\r\n\r\n`
-    body += `GET /gmail/v1/users/me/messages/${id}?format=full\r\n\r\n`
-  }
-  body += `--${boundary}--\r\n`
-
-  const res = await fetch('https://www.googleapis.com/batch/gmail/v1', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': `multipart/mixed; boundary=${boundary}`,
-    },
-    body,
-  })
-
-  const responseText = await res.text()
+// 并发获取邮件详情（10 个一组并发，比逐条快 10 倍，比 batch API 更可靠）
+async function fetchMessagesConcurrent(token: string, ids: string[]): Promise<{ messages: GmailMessage[]; errors: number }> {
   const messages: GmailMessage[] = []
+  let errors = 0
+  const CONCURRENCY = 10
 
-  // 解析 multipart 响应
-  const responseBoundary = res.headers.get('content-type')?.match(/boundary=(.+)/)?.[1] || ''
-  const parts = responseText.split(`--${responseBoundary}`).filter(p => p.trim() && p.trim() !== '--')
-
-  for (const part of parts) {
-    // 每个 part 里面有 HTTP 响应头和 JSON body
-    const jsonMatch = part.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      try {
-        const msg = JSON.parse(jsonMatch[0])
-        if (msg.id && msg.payload) {
-          messages.push(msg)
-        }
-      } catch {}
+  for (let i = 0; i < ids.length; i += CONCURRENCY) {
+    const chunk = ids.slice(i, i + CONCURRENCY)
+    const results = await Promise.allSettled(
+      chunk.map(id =>
+        fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).then(r => r.json())
+      )
+    )
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value.id && r.value.payload) {
+        messages.push(r.value)
+      } else {
+        errors++
+      }
     }
   }
 
-  return messages
+  return { messages, errors }
 }
 
 const TIMEOUT_MS = 50_000
@@ -273,23 +256,18 @@ export async function POST() {
 
           let messages: GmailMessage[]
           try {
-            messages = await fetchMessagesBatch(token, batchIds)
+            const result = await fetchMessagesConcurrent(token, batchIds)
+            messages = result.messages
+            errors += result.errors
           } catch (e: any) {
-            log(`  批量获取失败: ${e.message}，跳过 ${batchIds.length} 封`)
+            log(`  获取失败: ${e.message}，跳过 ${batchIds.length} 封`)
             errors += batchIds.length
             processed += batchIds.length
             continue
           }
 
-          // 建立 ID → message 映射，没拿到的算 error
-          const msgMap = new Map<string, GmailMessage>()
-          for (const m of messages) msgMap.set(m.id, m)
-          errors += batchIds.length - messages.length
-
-          for (const id of batchIds) {
+          for (const msg of messages) {
             processed++
-            const msg = msgMap.get(id)
-            if (!msg) continue
 
             try {
               const ts = parseInt(msg.internalDate)
