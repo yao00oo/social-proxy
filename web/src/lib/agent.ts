@@ -272,6 +272,23 @@ function createTools(userId: string): Record<string, any> {
       limit: z.number().optional().describe('返回条数，默认50'),
     }),
     execute: async ({ limit }: { limit?: number }) => {
+      // Build open_id → name mapping from contact_identities
+      const idMapping = await query<{ platform_uid: string; display_name: string; contact_name: string }>(
+        `SELECT ci.platform_uid, ci.display_name, c.name as contact_name
+         FROM contact_identities ci JOIN contacts c ON ci.contact_id = c.id
+         WHERE c.user_id = ? AND ci.platform_uid LIKE 'ou_%'`, [userId]
+      )
+      const nameMap = new Map<string, string>()
+      for (const row of idMapping) {
+        const name = row.contact_name || row.display_name
+        if (name && !name.startsWith('ou_')) nameMap.set(row.platform_uid, name)
+      }
+      const resolveName = (name: string | null) => {
+        if (!name) return '未知'
+        if (name.startsWith('ou_')) return nameMap.get(name) || name.slice(0, 8) + '...'
+        return name
+      }
+
       const rows = await query<any>(`
         SELECT m.id, m.platform_msg_id as message_id, t.name as thread_name, t.type as thread_type,
           m.sender_name, m.content as incoming_content, m.timestamp as created_at,
@@ -298,26 +315,44 @@ function createTools(userId: string): Record<string, any> {
 
         return {
           ...row,
+          sender_name: resolveName(row.sender_name),
           is_at_me: isAtMe,
           is_read: !!row.is_read,
-          recent_history: history.reverse(),
+          recent_history: history.reverse().map((h: any) => ({
+            ...h,
+            sender_name: h.direction === 'sent' ? '我' : resolveName(h.sender_name),
+          })),
         }
       }))
 
       const unread = msgs.filter((m: any) => !m.is_read).length
       const atMe = msgs.filter((m: any) => m.is_at_me).length
 
-      // 返回格式化文本，不要原始 JSON（避免模型直接吐 JSON）
-      const summary = `共 ${msgs.length} 条消息（${unread} 条未读，${atMe} 条@我）\n\n` +
-        msgs.map((m: any) => {
-          const tags = [m.is_at_me ? '⚡@我' : '', !m.is_read ? '🆕' : ''].filter(Boolean).join(' ')
-          const history = (m.recent_history || []).map((h: any) =>
-            `  ${h.timestamp?.slice(11, 16)} [${h.direction === 'sent' ? '我' : (h.sender_name || m.thread_name)}] ${h.content?.slice(0, 80)}`
-          ).join('\n')
-          return `━━━ ID:${m.id} | ${m.thread_name} | ${m.created_at?.slice(0, 16)} ${tags} ━━━\n[${m.sender_name}] ${m.incoming_content?.slice(0, 200)}\n最近记录:\n${history || '  （无）'}`
-        }).join('\n\n')
+      // 按会话分组，每个会话只显示最新消息 + 未读数
+      const threadGroups = new Map<string, { name: string; platform: string; messages: any[]; unread: number }>()
+      for (const m of msgs) {
+        const key = m.thread_name || 'Unknown'
+        if (!threadGroups.has(key)) {
+          threadGroups.set(key, { name: key, platform: m.platform, messages: [], unread: 0 })
+        }
+        const group = threadGroups.get(key)!
+        group.messages.push(m)
+        if (!m.is_read) group.unread++
+      }
 
-      return { count: msgs.length, unread, atMe, summary }
+      const threads = Array.from(threadGroups.values()).map(g => ({
+        thread: g.name,
+        platform: g.platform,
+        unread: g.unread,
+        total: g.messages.length,
+        latest: {
+          sender: g.messages[0].sender_name,
+          content: g.messages[0].incoming_content?.slice(0, 100),
+          time: g.messages[0].created_at?.slice(0, 16),
+        }
+      }))
+
+      return { count: msgs.length, unread, atMe, threads }
     },
   },
 
