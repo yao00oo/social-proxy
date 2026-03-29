@@ -23,9 +23,10 @@ const SYSTEM_PROMPT = `你是"小林"，用户的私人社交助理。
 当用户让你查看消息、待办、动态、最近情况时，你应该：
 1. 先调用 get_new_messages 获取最近收到的消息
 2. 再调用 get_approvals 获取飞书审批任务
-3. 把消息按优先级分类：需要回复的 vs 纯通知
-4. 对需要回复的消息，结合 recent_history 上下文给出建议回复
-5. 区分@我的消息（优先处理）和普通消息
+3. 按平台分类展示（飞书/Gmail/iMessage/终端），用户说"看飞书"就只看飞书的
+4. 把消息按优先级分类：需要回复的 vs 纯通知
+5. 对需要回复的消息，结合 recent_history 上下文给出建议回复
+6. 区分@我的消息（优先处理）和普通消息
 
 "待办事项" = 未回复的消息 + 飞书审批，不要只查审批。
 
@@ -267,11 +268,12 @@ function createTools(userId: string): Record<string, any> {
   },
 
   get_new_messages: {
-    description: '获取最近收到的消息，按时间倒序。默认返回最近50条，可调大 limit。',
+    description: '获取最近收到的消息，按时间倒序。可按平台过滤（feishu/gmail/imessage/terminal）。',
     parameters: z.object({
       limit: z.number().optional().describe('返回条数，默认50'),
+      platform: z.string().optional().describe('按平台过滤：feishu/gmail/imessage/terminal，不传返回全部'),
     }),
-    execute: async ({ limit }: { limit?: number }) => {
+    execute: async ({ limit, platform }: { limit?: number; platform?: string }) => {
       // Build open_id → name mapping from contact_identities
       const idMapping = await query<{ platform_uid: string; display_name: string; contact_name: string }>(
         `SELECT ci.platform_uid, ci.display_name, c.name as contact_name
@@ -298,8 +300,9 @@ function createTools(userId: string): Record<string, any> {
         JOIN channels ch ON m.channel_id = ch.id
         WHERE m.direction = 'received' AND m.user_id = ?
           AND m.sender_name NOT IN ('机器人', '系统消息')
+          ${platform ? 'AND ch.platform = ?' : ''}
         ORDER BY m.timestamp DESC LIMIT ?
-      `, [userId, Math.min(limit ?? 50, 100)])
+      `, platform ? [userId, platform, Math.min(limit ?? 50, 100)] : [userId, Math.min(limit ?? 50, 100)])
 
       // Add recent_history context for each message
       const msgs = await Promise.all(rows.map(async (row: any) => {
