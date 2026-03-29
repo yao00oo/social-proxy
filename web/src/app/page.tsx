@@ -581,8 +581,31 @@ export default function HomePage() {
                 </div>
               )}
               {aiError && (
-                <div className="bg-error/10 text-error rounded-xl p-3 text-xs">
-                  出错了：{aiError}
+                <div className="bg-error/10 text-error rounded-xl p-3 text-xs flex items-center justify-between">
+                  <span>出错了：{aiError}</span>
+                  <button onClick={() => {
+                    const lastUserMsg = [...aiMessages].reverse().find(m => m.role === 'user')
+                    if (lastUserMsg) aiSendMessage(lastUserMsg.content)
+                  }} className="px-3 py-1 bg-error/20 rounded-lg hover:bg-error/30 cursor-pointer text-xs font-medium">
+                    重试
+                  </button>
+                </div>
+              )}
+              {!aiLoading && !aiError && aiMessages.length > 1 && (
+                <div className="flex justify-end">
+                  <button onClick={() => {
+                    const lastUserMsg = [...aiMessages].reverse().find(m => m.role === 'user')
+                    if (lastUserMsg) {
+                      setAiMessages(prev => {
+                        const lastUserIdx = prev.map(m => m.role).lastIndexOf('user')
+                        return lastUserIdx > 0 ? prev.slice(0, lastUserIdx) : prev
+                      })
+                      setTimeout(() => aiSendMessage(lastUserMsg.content), 100)
+                    }
+                  }} className="text-xs text-outline hover:text-on-surface cursor-pointer flex items-center gap-1 px-2 py-1">
+                    <span className="material-symbols-outlined text-sm">refresh</span>
+                    重新生成
+                  </button>
                 </div>
               )}
               <div ref={aiEndRef} />

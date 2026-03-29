@@ -621,15 +621,16 @@ async function fullSync(userId: string) {
       const pct = Math.round((chatIndex / sortedChats.length) * 100)
       await log(`  [${pct}%] 同步 ${chatIndex}/${sortedChats.length}: ${chat.name}`)
 
+      const msgStartTime = lastTs !== '0'
+        ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
+        : undefined
+
       try {
         // 动态间隔：刚限流过等5s，正常1.5s（~40次/分钟，留安全余量）
         const waitMs = consecutiveRateLimits > 0 ? 5000 : 1500
         if (chatIndex > 1) await new Promise(r => setTimeout(r, waitMs))
 
         // ── 阶段 1：拉新消息（增量 or 首次） ──
-        const msgStartTime = lastTs !== '0'
-          ? String(Math.floor((parseInt(lastTs) - 1000) / 1000))
-          : undefined
 
         const { messages: msgs, apiCalls } = await listMessages(userToken, chat.chat_id, msgStartTime)
         apiCallCount += apiCalls
@@ -654,8 +655,9 @@ async function fullSync(userId: string) {
           if (lastTs === '0' && msgs.length > 0) {
             const oldestTs = msgs.reduce((min, m) => m.create_time < min ? m.create_time : min, msgs[0].create_time)
             const oldestSec = String(Math.floor(parseInt(oldestTs) / 1000))
+            const allFetched = msgs.length < 200 // 不足 200 条说明已经是全部消息了
             await exec('UPDATE threads SET metadata = COALESCE(metadata, \'{}\'::jsonb) || ?::jsonb WHERE id = ?',
-              [JSON.stringify({ history_cursor: oldestSec, history_done: false }), thread.id])
+              [JSON.stringify({ history_cursor: oldestSec, history_done: allFetched }), thread.id])
           }
 
           log(`    -> 导入 ${chatImported} 条新消息${msgs.length >= 200 ? '（还有更多新消息）' : ''}`)
