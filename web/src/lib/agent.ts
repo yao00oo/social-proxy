@@ -6,15 +6,15 @@ import { query, queryOne, exec } from './db'
 // feishu imports removed — settings read inline with userId filter
 
 const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY || '' })
-const DEFAULT_MODEL = 'deepseek/deepseek-chat-v3-0324'
+const DEFAULT_MODEL = 'qwen/qwen3-next-80b-a3b-instruct:free'
 
 export const AVAILABLE_MODELS = [
-  { id: 'deepseek/deepseek-chat-v3-0324', name: 'DeepSeek V3', description: '性价比最高，推荐' },
+  { id: 'qwen/qwen3-next-80b-a3b-instruct:free', name: 'Qwen3 80B（推荐）', description: '免费，工具调用好' },
+  { id: 'deepseek/deepseek-chat-v3-0324', name: 'DeepSeek V3', description: '性价比高' },
   { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B', description: '中文能力强' },
-  { id: 'meta-llama/llama-4-maverick', name: 'Llama 4 Maverick', description: 'Meta 最新，综合强' },
+  { id: 'meta-llama/llama-4-maverick', name: 'Llama 4 Maverick', description: 'Meta 最新' },
   { id: 'cohere/command-a', name: 'Cohere Command A', description: '工具调用稳定' },
-  { id: 'mistralai/mistral-small-3.1-24b-instruct', name: 'Mistral Small 3.1', description: '快速响应' },
-  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', description: '经典版' },
+  { id: 'mistralai/mistral-small-3.1-24b-instruct', name: 'Mistral Small 3.1', description: '快速' },
 ]
 
 const SYSTEM_PROMPT = `你是"小林"，用户的私人社交助理。
