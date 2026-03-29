@@ -909,7 +909,7 @@ export default function SettingsPage() {
                     setModelSaving(false)
                   }}
                   className={`p-3 rounded-xl text-left transition-all ${
-                    selectedModel === m.id || (!selectedModel && m.id === 'qwen/qwen3-next-80b-a3b-instruct:free')
+                    selectedModel === m.id || (!selectedModel && m.id === 'meta-llama/llama-4-maverick')
                       ? 'bg-primary/10 border-2 border-primary'
                       : 'bg-surface-container-highest/50 border-2 border-transparent hover:border-outline/20'
                   }`}
