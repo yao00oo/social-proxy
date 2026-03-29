@@ -857,7 +857,17 @@ export async function GET() {
 
   // Read sync status from DB (Vercel serverless instances don't share memory)
   const statusRow = await queryOne<{ value: string }>(`SELECT value FROM settings WHERE key = 'feishu_sync_status' AND user_id = ?`, [userId])
-  const dbStatus = statusRow?.value ? JSON.parse(statusRow.value) : null
+  let dbStatus = statusRow?.value ? JSON.parse(statusRow.value) : null
+
+  // 超时自动解锁：Vercel 进程被杀后 running 没重置
+  if (dbStatus?.running && dbStatus?.updatedAt && (Date.now() - dbStatus.updatedAt > 90000)) {
+    dbStatus.running = false
+    dbStatus.status = 'paused'
+    await exec(
+      `UPDATE settings SET value = ? WHERE key = 'feishu_sync_status' AND user_id = ?`,
+      [JSON.stringify(dbStatus), userId],
+    )
+  }
 
   return NextResponse.json({
     running: dbStatus?.running || syncRunning,
