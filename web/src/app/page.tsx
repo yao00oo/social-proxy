@@ -304,18 +304,37 @@ export default function HomePage() {
     return () => clearInterval(iv)
   }, [status])
 
-  // ---------- Auto incremental sync (every 60s, only for already-synced threads) ----------
+  // ---------- Auto sync: fullSync if incomplete, quickSync if done ----------
   useEffect(() => {
     if (status !== 'authenticated') return
-    const quickSync = () => {
-      fetch('/api/feishu-sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quick: true }),
-      }).catch(() => {})
+
+    let stopped = false
+
+    // 检查是否还有未同步的群，有则自动 fullSync 续传
+    const autoSync = async () => {
+      try {
+        const statusRes = await fetch('/api/sync-status').then(r => r.json())
+        const synced = statusRes?.feishu?.syncedChats || 0
+        const total = statusRes?.feishu?.totalChats || 0
+
+        if (total > 0 && synced < total && !stopped) {
+          // 还有未同步的群，触发 fullSync
+          await fetch('/api/feishu-sync', { method: 'POST' }).catch(() => {})
+        } else if (!stopped) {
+          // 全部同步完，quickSync 拉增量
+          await fetch('/api/feishu-sync', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quick: true }),
+          }).catch(() => {})
+        }
+      } catch {}
     }
-    const iv = setInterval(quickSync, 60000)
-    return () => clearInterval(iv)
+
+    // 立即检查一次，然后每 60 秒检查
+    autoSync()
+    const iv = setInterval(autoSync, 60000)
+    return () => { stopped = true; clearInterval(iv) }
   }, [status])
 
   // ---------- Load real contact history ----------
