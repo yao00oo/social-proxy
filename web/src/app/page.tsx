@@ -383,24 +383,35 @@ export default function HomePage() {
     let stopped = false
 
     const autoSync = async () => {
-      while (!stopped) {
+      // 延迟 10 秒再开始自动同步，让页面先加载完
+      await new Promise(r => setTimeout(r, 10000))
+
+      let rounds = 0
+      const MAX_ROUNDS = 30
+      while (!stopped && rounds < MAX_ROUNDS) {
+        rounds++
         try {
           const statusRes = await fetch('/api/sync-status').then(r => r.json())
           const synced = statusRes?.feishu?.syncedChats || 0
           const total = statusRes?.feishu?.totalChats || 0
+          const isRunning = statusRes?.feishu?.running
           const hasMore = statusRes?.feishu?.lastResult?.hasMoreHistory
 
+          // 如果已经在跑，等它跑完再决定
+          if (isRunning) {
+            await new Promise(r => setTimeout(r, 10000))
+            continue
+          }
+
           if (total > 0 && (synced < total || hasMore) && !stopped) {
-            // 还有未同步的群或大群没拉完，持续 fullSync
             await fetch('/api/feishu-sync', { method: 'POST' }).catch(() => {})
-            // 短暂等待后继续下一轮
-            await new Promise(r => setTimeout(r, 2000))
+            // 等同步跑完（最多 70 秒）
+            await new Promise(r => setTimeout(r, 70000))
           } else {
-            // 全部同步完，切换到 60 秒增量模式
             break
           }
         } catch {
-          await new Promise(r => setTimeout(r, 5000))
+          await new Promise(r => setTimeout(r, 10000))
         }
       }
     }
