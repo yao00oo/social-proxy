@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import ReactMarkdown from 'react-markdown'
 // Custom hook instead of useChat — AI SDK v6 transport API too unstable
 
 // ---------- Types ----------
@@ -1006,7 +1007,14 @@ function AiMessage({ content, time }: { content: string; time: string }) {
   return (
     <div className="flex flex-col items-start max-w-[85%]">
       <div className="bg-primary-container text-white px-4 py-3 rounded-[18px] rounded-bl-sm draft-shadow">
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
+        <div className="text-sm leading-relaxed prose prose-invert prose-sm max-w-none
+          prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0.5
+          prose-headings:text-white prose-headings:font-bold prose-headings:mt-2 prose-headings:mb-1
+          prose-strong:text-white prose-code:text-green-200 prose-code:bg-white/10 prose-code:px-1 prose-code:rounded
+          prose-pre:bg-white/10 prose-pre:rounded-lg prose-pre:p-2
+          prose-a:text-blue-200 prose-a:underline">
+          <ReactMarkdown>{content}</ReactMarkdown>
+        </div>
       </div>
       <span className="text-[10px] text-outline mt-1.5 ml-2">小林 · {time}</span>
     </div>
