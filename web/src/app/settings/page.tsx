@@ -894,7 +894,7 @@ export default function SettingsPage() {
                     setModelSaving(false)
                   }}
                   className={`p-3 rounded-xl text-left transition-all ${
-                    selectedModel === m.id || (!selectedModel && m.id === 'anthropic/claude-haiku-4.5')
+                    selectedModel === m.id || (!selectedModel && m.id === 'deepseek/deepseek-chat-v3-0324')
                       ? 'bg-primary/10 border-2 border-primary'
                       : 'bg-surface-container-highest/50 border-2 border-transparent hover:border-outline/20'
                   }`}
