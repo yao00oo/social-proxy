@@ -48,6 +48,7 @@ const SYSTEM_PROMPT = `你是"小林"，用户的私人社交助理。
 
 ## 行为准则
 - 回答简洁，用中文
+- **绝对不要输出原始 JSON 数据**，必须用自然语言总结分析
 - 消息分析要全面，不要遗漏
 - 需要回复的消息按紧急程度排序
 - 纯通知/系统消息单独列出说明不需要回复
@@ -279,6 +280,7 @@ function createTools(userId: string): Record<string, any> {
         JOIN threads t ON m.thread_id = t.id
         JOIN channels ch ON m.channel_id = ch.id
         WHERE m.direction = 'received' AND m.user_id = ?
+          AND m.sender_name NOT IN ('机器人', '系统消息')
         ORDER BY m.timestamp DESC LIMIT ?
       `, [userId, Math.min(limit ?? 50, 100)])
 
@@ -304,7 +306,18 @@ function createTools(userId: string): Record<string, any> {
 
       const unread = msgs.filter((m: any) => !m.is_read).length
       const atMe = msgs.filter((m: any) => m.is_at_me).length
-      return { count: msgs.length, unread, atMe, messages: msgs }
+
+      // 返回格式化文本，不要原始 JSON（避免模型直接吐 JSON）
+      const summary = `共 ${msgs.length} 条消息（${unread} 条未读，${atMe} 条@我）\n\n` +
+        msgs.map((m: any) => {
+          const tags = [m.is_at_me ? '⚡@我' : '', !m.is_read ? '🆕' : ''].filter(Boolean).join(' ')
+          const history = (m.recent_history || []).map((h: any) =>
+            `  ${h.timestamp?.slice(11, 16)} [${h.direction === 'sent' ? '我' : (h.sender_name || m.thread_name)}] ${h.content?.slice(0, 80)}`
+          ).join('\n')
+          return `━━━ ID:${m.id} | ${m.thread_name} | ${m.created_at?.slice(0, 16)} ${tags} ━━━\n[${m.sender_name}] ${m.incoming_content?.slice(0, 200)}\n最近记录:\n${history || '  （无）'}`
+        }).join('\n\n')
+
+      return { count: msgs.length, unread, atMe, summary }
     },
   },
 
