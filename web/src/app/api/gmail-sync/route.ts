@@ -13,6 +13,7 @@ import {
 } from '@/lib/sync-helpers'
 
 let syncRunning = false
+let syncStartedAt = 0
 let syncLog: string[] = []
 let lastResult: any = null
 
@@ -180,17 +181,22 @@ async function fetchMessagesConcurrent(token: string, ids: string[]): Promise<{ 
 
 const TIMEOUT_MS = 50_000
 
+export const maxDuration = 60
+
 export async function POST() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  if (syncRunning) return NextResponse.json({ error: '同步中' }, { status: 409 })
+  if (syncRunning && (Date.now() - syncStartedAt < 65000)) {
+    return NextResponse.json({ error: '同步中' }, { status: 409 })
+  }
 
   syncRunning = true
+  syncStartedAt = Date.now()
   syncLog = []
   lastResult = null
 
-  ;(async () => {
+  try {
     const startTime = Date.now()
     try {
       const gmailChannels = await getChannelsByPlatform(userId, 'gmail')
@@ -352,7 +358,10 @@ export async function POST() {
     } finally {
       syncRunning = false
     }
-  })()
 
-  return NextResponse.json({ started: true })
+    return NextResponse.json({ ok: true, result: lastResult })
+  } catch (e: any) {
+    syncRunning = false
+    return NextResponse.json({ error: e.message }, { status: 500 })
+  }
 }

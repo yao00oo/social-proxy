@@ -786,24 +786,22 @@ export default function SettingsPage() {
 
     while (round < MAX_ROUNDS) {
       round++
-      await fetch('/api/gmail-sync', { method: 'POST' })
+      try {
+        const res = await fetch('/api/gmail-sync', { method: 'POST' })
+        const data = await res.json()
 
-      // 等待本轮完成
-      await new Promise<void>((resolve) => {
-        const poll = setInterval(async () => {
-          const s = await fetch('/api/gmail-sync').then(r => r.json())
-          setGmailSyncLog(s.log || [])
-          if (!s.running) {
-            clearInterval(poll)
-            setGmailSyncResult(s.lastResult)
-            resolve()
-          }
-        }, 1500)
-      })
+        // 同步完成后拉取最新日志
+        const s = await fetch('/api/gmail-sync').then(r => r.json())
+        setGmailSyncLog(s.log || [])
+        setGmailSyncResult(data.result || s.lastResult)
 
-      // 检查是否需要续传
-      const status = await fetch('/api/gmail-sync').then(r => r.json())
-      if (!status.lastResult || status.lastResult.done || status.lastResult.error) break
+        // 检查是否需要续传
+        const result = data.result || s.lastResult
+        if (!result || result.done || result.error) break
+      } catch (e) {
+        setGmailSyncLog(prev => [...prev, `请求失败: ${e}`])
+        break
+      }
     }
 
     setGmailSyncing(false)
