@@ -4,6 +4,7 @@
 // Vercel serverless: extend timeout to 60s (Hobby) or 300s (Pro)
 export const maxDuration = 60
 
+import { after } from 'next/server'
 import { NextResponse } from 'next/server'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
 import { getSetting } from '@/lib/feishu'
@@ -955,8 +956,7 @@ export async function POST(req: Request) {
     }
   }
 
-  // Mode 4: Trigger full sync (runs synchronously within the request)
-  // syncRunning 可能因 Vercel 超时卡住（进程被杀但变量未重置），60 秒后自动解锁
+  // Mode 4: Trigger full sync（用 after() 后台执行，POST 立刻返回）
   if (syncRunning && (Date.now() - syncStartedAt < 65000)) {
     return NextResponse.json({ ok: false, message: '同步正在进行中' }, { status: 409 })
   }
@@ -964,13 +964,15 @@ export async function POST(req: Request) {
   syncRunning = true; syncStartedAt = Date.now()
   syncLog = ['开始全量同步...']
 
-  try {
-    await fullSync(userId)
-    return NextResponse.json({ ok: true, message: '同步完成', result: lastResult })
-  } catch (err: any) {
-    syncLog.push(`同步异常: ${err.message}`)
-    return NextResponse.json({ ok: false, message: err.message, result: lastResult })
-  } finally {
-    syncRunning = false
-  }
+  after(async () => {
+    try {
+      await fullSync(userId)
+    } catch (err: any) {
+      syncLog.push(`同步异常: ${err.message}`)
+    } finally {
+      syncRunning = false
+    }
+  })
+
+  return NextResponse.json({ ok: true, message: '同步已启动' })
 }

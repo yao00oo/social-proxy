@@ -22,6 +22,11 @@ export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
+  // 超时自动解锁（Vercel 进程被杀后 running 没重置）
+  if (syncRunning && syncStartedAt > 0 && (Date.now() - syncStartedAt > 90000)) {
+    syncRunning = false
+  }
+
   return NextResponse.json({ running: syncRunning, log: syncLog.slice(-50), lastResult })
 }
 
@@ -360,10 +365,7 @@ export async function POST() {
     } finally {
       syncRunning = false
     }
+  })
 
-    return NextResponse.json({ ok: true, result: lastResult })
-  } catch (e: any) {
-    syncRunning = false
-    return NextResponse.json({ error: e.message }, { status: 500 })
-  }
+  return NextResponse.json({ started: true })
 }
