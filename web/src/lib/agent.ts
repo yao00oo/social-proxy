@@ -616,22 +616,45 @@ npm install -g social-proxy-mcp
       }
 
       try {
-        const body: any = {}
-        if (url) body.url = url
-        else if (content) { body.content = content; if (name) body.name = name }
+        let skillContent = content || ''
+        let sourceUrl = url || null
 
-        // 调内部 API 安装
-        const res = await fetch(`${process.env.NEXTAUTH_URL || 'https://botook.ai'}/api/skills`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        const data = await res.json()
-        if (data.ok) {
-          return { success: true, message: `✅ 技能 "${data.skill?.name}" 安装成功！你可以试试用它了。` }
-        } else {
-          return { success: false, message: `安装失败: ${data.error}` }
+        if (url && !content) {
+          // 从 URL 下载 SKILL.md
+          const res = await fetch(url)
+          if (!res.ok) return { success: false, message: `无法下载: HTTP ${res.status}` }
+          skillContent = await res.text()
         }
+
+        if (!skillContent) return { success: false, message: '没有技能内容' }
+
+        // 解析 frontmatter
+        const fmMatch = skillContent.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/)
+        let skillName = name || ''
+        let skillDesc = ''
+        const metadata: Record<string, string> = {}
+        if (fmMatch) {
+          for (const line of fmMatch[1].split('\n')) {
+            const idx = line.indexOf(':')
+            if (idx === -1) continue
+            const k = line.slice(0, idx).trim()
+            let v = line.slice(idx + 1).trim()
+            if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+            metadata[k] = v
+          }
+          if (!skillName) skillName = metadata.name || ''
+          skillDesc = metadata.description || ''
+        }
+        if (!skillName) return { success: false, message: '技能名称缺失' }
+
+        await exec(
+          `INSERT INTO skills (user_id, name, description, content, source_url, metadata)
+           VALUES (?, ?, ?, ?, ?, ?::jsonb)
+           ON CONFLICT (user_id, name) DO UPDATE SET description = EXCLUDED.description, content = EXCLUDED.content, source_url = EXCLUDED.source_url, enabled = 1`,
+          [userId, skillName, skillDesc, skillContent, sourceUrl, JSON.stringify(metadata)]
+        )
+
+        return { success: true, message: `✅ 技能 "${skillName}" 安装成功！` }
       } catch (e: any) {
         return { success: false, message: `安装出错: ${e.message}` }
       }

@@ -1,5 +1,6 @@
 // POST /api/gmail-sync — Gmail 邮件同步（支持续传，全量拉取）
 // GET  /api/gmail-sync — 查询同步状态
+import { after } from 'next/server'
 import { NextResponse } from 'next/server'
 import { query, queryOne, exec } from '@/lib/db'
 import { getUserId, unauthorized } from '@/lib/auth-helper'
@@ -196,7 +197,8 @@ export async function POST() {
   syncLog = []
   lastResult = null
 
-  try {
+  // 用 after() 在后台执行同步，POST 立刻返回
+  after(async () => {
     const startTime = Date.now()
     try {
       const gmailChannels = await getChannelsByPlatform(userId, 'gmail')
