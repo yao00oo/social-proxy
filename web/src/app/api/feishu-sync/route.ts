@@ -551,12 +551,23 @@ async function fullSync(userId: string) {
     const chats = await listChats(userToken)
 
     // 4. Discover p2p chats via search API (listChats 不返回私聊)
+    // 4. Discover p2p（只在首次或 p2p 很少时才搜，避免每轮浪费 20 秒）
+    const existingP2pCount = existingThreads.filter(t => t.platform_thread_id && !chats.some(c => c.chat_id === t.platform_thread_id)).length
+    const hasP2pThreads = existingThreads.some(t => {
+      // 检查是否有 type='dm' 的 thread（通过查 DB 更准确但已有数据）
+      return false // 简单判断：靠已有 threads 数量
+    })
+    const p2pThreadCount = await queryOne<{ n: number }>(
+      "SELECT COUNT(*)::int as n FROM threads WHERE user_id = ? AND channel_id = ? AND type = 'dm'",
+      [userId, channelId],
+    )
     const timeLeft = TIMEOUT_MS - (Date.now() - startTime)
-    if (timeLeft > 15000) {
-      log('搜索私聊...')
+    if ((p2pThreadCount?.n || 0) === 0 && timeLeft > 20000) {
+      // 还没有任何 p2p，搜一次
+      log('首次搜索私聊...')
       const knownIds = new Set(chats.map(c => c.chat_id))
       for (const t of existingThreads) knownIds.add(t.platform_thread_id)
-      const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds, senderNameCache, Math.min(timeLeft - 15000, 20000))
+      const p2pChats = await discoverP2pChats(userToken, channelId, userId, knownIds, senderNameCache, Math.min(timeLeft - 15000, 15000))
       if (p2pChats.length > 0) {
         for (const p of p2pChats) {
           chats.push({ chat_id: p.chat_id, name: p.name, chat_type: 'p2p' })
