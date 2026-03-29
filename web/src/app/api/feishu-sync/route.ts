@@ -711,7 +711,8 @@ async function fullSync(userId: string) {
           log(`    token 过期，刷新后重试...`)
           try {
             userToken = await ensureValidToken(userId)
-            const { messages: retryMsgs } = await listMessages(userToken, chat.chat_id, msgStartTime)
+            const retryStartTime = lastTs !== '0' ? String(Math.floor((parseInt(lastTs) - 1000) / 1000)) : undefined
+            const { messages: retryMsgs } = await listMessages(userToken, chat.chat_id, retryStartTime)
             consecutiveRateLimits = 0
             const { imported: retryImported, newTs: retryTs } = await processChatMessages(
               userId, channelId, thread.id, retryMsgs, lastTs, myUserId, senderNameCache, myName,

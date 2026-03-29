@@ -6,7 +6,7 @@ import { query, queryOne, exec } from './db'
 // feishu imports removed — settings read inline with userId filter
 
 const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY || '' })
-const DEFAULT_MODEL = 'deepseek/deepseek-chat-v3-0324'
+const DEFAULT_MODEL = 'anthropic/claude-haiku-4-5-20251001'
 
 export const AVAILABLE_MODELS = [
   { id: 'deepseek/deepseek-chat-v3-0324', name: 'DeepSeek V3 (推荐)', description: '性价比最高' },
