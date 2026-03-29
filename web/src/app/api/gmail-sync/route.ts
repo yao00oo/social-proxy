@@ -22,15 +22,40 @@ export async function GET() {
   const userId = await getUserId()
   if (!userId) return unauthorized()
 
-  // 超时自动解锁（Vercel 进程被杀后 running 没重置）
-  if (syncRunning && syncStartedAt > 0 && (Date.now() - syncStartedAt > 90000)) {
-    syncRunning = false
+  // 从数据库读状态（serverless 实例间不共享内存）
+  const statusRow = await queryOne<{ value: string }>(
+    "SELECT value FROM settings WHERE key = 'gmail_sync_status' AND user_id = ?", [userId]
+  )
+  const dbStatus = statusRow?.value ? JSON.parse(statusRow.value) : null
+
+  // 超时自动解锁
+  if (dbStatus?.running && dbStatus?.updatedAt && (Date.now() - dbStatus.updatedAt > 90000)) {
+    dbStatus.running = false
+    await exec(
+      "UPDATE settings SET value = ? WHERE key = 'gmail_sync_status' AND user_id = ?",
+      [JSON.stringify(dbStatus), userId]
+    )
   }
 
-  return NextResponse.json({ running: syncRunning, log: syncLog.slice(-50), lastResult })
+  return NextResponse.json({
+    running: dbStatus?.running || syncRunning,
+    log: dbStatus?.log || syncLog.slice(-50),
+    lastResult: dbStatus?.lastResult || lastResult,
+  })
 }
 
 function log(msg: string) { console.log(msg); syncLog.push(msg) }
+
+// 将同步状态持久化到数据库（serverless 实例间共享）
+async function persistStatus(userId: string, running: boolean) {
+  try {
+    await exec(
+      `INSERT INTO settings(user_id, key, value) VALUES(?, 'gmail_sync_status', ?)
+       ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
+      [userId, JSON.stringify({ running, log: syncLog.slice(-50), lastResult, updatedAt: Date.now() })]
+    )
+  } catch {}
+}
 
 // 确保 token 有效，过期则刷新
 async function ensureToken(channelId: number): Promise<string> {
@@ -204,6 +229,7 @@ export async function POST() {
 
   // 用 after() 在后台执行同步，POST 立刻返回
   after(async () => {
+    await persistStatus(userId, true)
     const startTime = Date.now()
     try {
       const gmailChannels = await getChannelsByPlatform(userId, 'gmail')
@@ -279,8 +305,9 @@ export async function POST() {
             continue
           }
 
+          processed += batchIds.length // 整批算已处理
+
           for (const msg of messages) {
-            processed++
 
             try {
               const ts = parseInt(msg.internalDate)
@@ -341,6 +368,7 @@ export async function POST() {
           }
 
           log(`  处理 ${processed}/${totalCount}: 导入 ${imported}, 已存在 ${skipped}, 自发自 ${selfSkipped}, 错误 ${errors}`)
+          await persistStatus(userId, true)
         }
 
         // 保存同步进度
@@ -364,6 +392,7 @@ export async function POST() {
       lastResult = { error: e.message }
     } finally {
       syncRunning = false
+      await persistStatus(userId, false)
     }
   })
 
