@@ -264,13 +264,18 @@ export default function HomePage() {
 
           // No more markers — remaining buffer could be partial marker or text
           // Only flush text up to last \n to avoid cutting a partial @@TOOL:...@@
-          // Filter out model artifacts (chain-of-thought leaks, placeholders, tool call fragments)
-          const cleanBuffer = (text: string) => text
-            .replace(/place__holder__no__\d+/g, '')
-            .replace(/<\s*\|[^|]*\|\s*>/g, '')
-            .replace(/\bcref="[^"]*"[)}\]]*;?/g, '')
-            .replace(/\b(gettable|get_new|get_approvals|search_messages)\w*\s*json\s*\{[^}]*\}/gi, '')
-            .replace(/^\s*[D-Z]["'][a-z]+\s+cref.*$/gm, '')
+          // Filter model artifacts: discard text between tool calls (chain-of-thought leaks)
+          // Only keep text that looks like real Chinese/English content
+          const cleanBuffer = (text: string) => {
+            // If we just had a tool call/result and text looks like garbage, skip it
+            if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1].role === 'tool' && text.trim().length < 200) {
+              const hasRealContent = /[\u4e00-\u9fff]{2,}|^[A-Z][a-z]/.test(text.trim())
+              if (!hasRealContent) return ''
+            }
+            return text
+              .replace(/<\s*\|[^|]*\|\s*>/g, '')
+              .replace(/place__holder__\w+/g, '')
+          }
 
           const lastNewline = buffer.lastIndexOf('\n')
           if (lastNewline > 0 && !buffer.includes('@@')) {
