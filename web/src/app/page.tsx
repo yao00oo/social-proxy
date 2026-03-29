@@ -205,13 +205,36 @@ export default function HomePage() {
             }
           }
 
-          // Show the text part (without draft markers)
-          if (cleanedText) {
+          // Split text into real content vs artifacts
+          const lines = cleanedText.split('\n')
+          let realContent = ''
+          let artifactContent = ''
+          for (const line of lines) {
+            if (isArtifact(line)) {
+              artifactContent += line + '\n'
+            } else {
+              realContent += line + '\n'
+            }
+          }
+          realContent = realContent.trim()
+          artifactContent = artifactContent.trim()
+
+          // Show artifact as collapsible message
+          if (artifactContent) {
+            const artifactId = `artifact-${Date.now()}`
+            const existing = display.find(m => m.id === artifactId || m.role === 'artifact')
+            if (!existing) {
+              display.push({ id: artifactId, role: 'artifact', content: artifactContent })
+            }
+          }
+
+          // Show the real text part
+          if (realContent) {
             const existing = display.find(m => m.id === assistantId)
             if (existing) {
-              existing.content = cleanedText
+              existing.content = realContent
             } else {
-              display.push({ id: assistantId, role: 'assistant', content: cleanedText })
+              display.push({ id: assistantId, role: 'assistant', content: realContent })
             }
           }
         }
@@ -264,18 +287,21 @@ export default function HomePage() {
 
           // No more markers — remaining buffer could be partial marker or text
           // Only flush text up to last \n to avoid cutting a partial @@TOOL:...@@
-          // Filter model artifacts: discard text between tool calls (chain-of-thought leaks)
-          // Only keep text that looks like real Chinese/English content
-          const cleanBuffer = (text: string) => {
-            // If we just had a tool call/result and text looks like garbage, skip it
-            if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1].role === 'tool' && text.trim().length < 200) {
-              const hasRealContent = /[\u4e00-\u9fff]{2,}|^[A-Z][a-z]/.test(text.trim())
-              if (!hasRealContent) return ''
+          // Detect model artifacts (chain-of-thought leaks between tool calls)
+          const isArtifact = (text: string) => {
+            if (!text.trim()) return false
+            // After a tool call, short text without real content is likely an artifact
+            if (newMsgs.length > 0 && newMsgs[newMsgs.length - 1].role === 'tool' && text.trim().length < 300) {
+              const hasRealContent = /[\u4e00-\u9fff]{2,}|^[A-Z][a-z]{3,}/.test(text.trim())
+              if (!hasRealContent) return true
             }
-            return text
-              .replace(/<\s*\|[^|]*\|\s*>/g, '')
-              .replace(/place__holder__\w+/g, '')
+            // Known placeholder patterns
+            if (/place__holder__|<\s*\|[^|]*\|\s*>/.test(text)) return true
+            return false
           }
+          const cleanBuffer = (text: string) => text
+            .replace(/<\s*\|[^|]*\|\s*>/g, '')
+            .replace(/place__holder__\w+/g, '')
 
           const lastNewline = buffer.lastIndexOf('\n')
           if (lastNewline > 0 && !buffer.includes('@@')) {
@@ -645,6 +671,8 @@ export default function HomePage() {
                     <ToolCallBubble toolCall={msg.toolCall} />
                   ) : msg.role === 'draft' && msg.draft ? (
                     <AgentDraftCard draft={msg.draft} msgId={msg.id} onUpdate={(id, d) => setAiMessages(prev => prev.map(m => m.id === id ? { ...m, draft: d } : m))} />
+                  ) : msg.role === 'artifact' && msg.content ? (
+                    <ArtifactBubble content={msg.content} />
                   ) : msg.role === 'assistant' && msg.content ? (
                     <AiMessage content={msg.content} time="" />
                   ) : msg.role === 'user' && msg.content ? (
@@ -1042,6 +1070,26 @@ function ToolCallBubble({ toolCall }: { toolCall: { name: string; args: any; res
               <pre className="whitespace-pre-wrap mt-1">{JSON.stringify(toolCall.result, null, 2).slice(0, 3000)}{JSON.stringify(toolCall.result).length > 3000 ? '\n...(已截断)' : ''}</pre>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ArtifactBubble({ content }: { content: string }) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div className="flex flex-col items-start max-w-[85%]">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container-high/50 text-outline text-xs hover:bg-surface-container-highest transition-colors cursor-pointer"
+      >
+        <span className="material-symbols-outlined text-sm">{expanded ? 'expand_less' : 'expand_more'}</span>
+        <span>模型思考过程</span>
+      </button>
+      {expanded && (
+        <div className="mt-1 px-3 py-2 rounded-lg bg-surface-container text-[11px] text-outline font-mono whitespace-pre-wrap max-h-40 overflow-y-auto max-w-full">
+          {content}
         </div>
       )}
     </div>

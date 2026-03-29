@@ -242,6 +242,25 @@ export const conversations = pgTable('conversations', {
   index('idx_conv_user').on(t.userId),
 ])
 
+// ════════════════════════════════════════════════════════
+// Skills — 用户安装的技能（slash commands）
+// ════════════════════════════════════════════════════════
+
+export const skills = pgTable('skills', {
+  id: serial('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  name: text('name').notNull(), // skill name (slash command)
+  description: text('description'), // when to use this skill
+  content: text('content').notNull(), // full SKILL.md content (markdown)
+  enabled: integer('enabled').default(1),
+  sourceUrl: text('source_url'), // where this skill came from (GitHub URL, ClawHub, etc.)
+  metadata: jsonb('metadata').default({}), // frontmatter parsed as JSON
+  createdAt: timestamp('created_at', { mode: 'date' }).defaultNow(),
+}, (t) => [
+  index('idx_skills_user').on(t.userId),
+  uniqueIndex('idx_skills_user_name').on(t.userId, t.name),
+])
+
 export const conversationMessages = pgTable('conversation_messages', {
   id: serial('id').primaryKey(),
   conversationId: integer('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),

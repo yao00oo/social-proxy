@@ -595,6 +595,22 @@ npm install -g social-proxy-mcp
     },
   },
 
+  use_skill: {
+    description: '加载并执行已安装的技能。当用户的请求匹配某个技能的描述时调用。',
+    parameters: z.object({
+      name: z.string().describe('技能名称'),
+      arguments: z.string().optional().describe('传递给技能的参数'),
+    }),
+    execute: async ({ name, arguments: args }: { name: string; arguments?: string }) => {
+      const skill = await queryOne<{ content: string }>('SELECT content FROM skills WHERE user_id = ? AND name = ? AND enabled = 1', [userId, name])
+      if (!skill) return { error: `技能 "${name}" 未找到` }
+      let content = skill.content
+      // Replace $ARGUMENTS placeholder
+      if (args) content = content.replace(/\$ARGUMENTS/g, args)
+      return { skill_content: content, instruction: '请按照以上技能内容执行操作。' }
+    },
+  },
+
   search_docs: {
     description: '搜索文档内容。在飞书文档、本地文件等中按关键词搜索。',
     parameters: z.object({
@@ -618,12 +634,21 @@ npm install -g social-proxy-mcp
 }
 
 // Agent entry point
-export function runAgent(userId: string, messages: Array<{ role: string; content: string }>, modelId?: string) {
+export async function runAgent(userId: string, messages: Array<{ role: string; content: string }>, modelId?: string) {
+  // Load enabled skills for this user
+  const userSkills = await query<{ name: string; description: string | null }>('SELECT name, description FROM skills WHERE user_id = ? AND enabled = 1', [userId])
+
+  let skillPrompt = ''
+  if (userSkills.length > 0) {
+    skillPrompt = '\n\n## 已安装的技能\n当用户请求匹配以下技能时，调用 use_skill 工具加载完整指令。\n\n' +
+      userSkills.map(s => `- **${s.name}**: ${s.description || '无描述'}`).join('\n')
+  }
+
   const tools = createTools(userId)
   const model = modelId || process.env.AGENT_MODEL || DEFAULT_MODEL
   return streamText({
     model: openrouter(model),
-    system: SYSTEM_PROMPT,
+    system: SYSTEM_PROMPT + skillPrompt,
     messages: messages as any,
     tools,
     stopWhen: stepCountIs(10),
