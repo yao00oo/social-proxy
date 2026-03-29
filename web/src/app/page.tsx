@@ -264,13 +264,21 @@ export default function HomePage() {
 
           // No more markers — remaining buffer could be partial marker or text
           // Only flush text up to last \n to avoid cutting a partial @@TOOL:...@@
+          // Filter out model artifacts (chain-of-thought leaks, placeholders, tool call fragments)
+          const cleanBuffer = (text: string) => text
+            .replace(/place__holder__no__\d+/g, '')
+            .replace(/<\s*\|[^|]*\|\s*>/g, '')
+            .replace(/\bcref="[^"]*"[)}\]]*;?/g, '')
+            .replace(/\b(gettable|get_new|get_approvals|search_messages)\w*\s*json\s*\{[^}]*\}/gi, '')
+            .replace(/^\s*[D-Z]["'][a-z]+\s+cref.*$/gm, '')
+
           const lastNewline = buffer.lastIndexOf('\n')
           if (lastNewline > 0 && !buffer.includes('@@')) {
-            textContent += buffer.slice(0, lastNewline + 1)
+            textContent += cleanBuffer(buffer.slice(0, lastNewline + 1))
             buffer = buffer.slice(lastNewline + 1)
             flush()
           } else if (!buffer.includes('@@')) {
-            textContent += buffer
+            textContent += cleanBuffer(buffer)
             buffer = ''
             flush()
           }
