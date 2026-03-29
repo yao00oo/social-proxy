@@ -9,13 +9,12 @@ const openrouter = createOpenRouter({ apiKey: process.env.OPENROUTER_API_KEY || 
 const DEFAULT_MODEL = 'deepseek/deepseek-chat-v3-0324'
 
 export const AVAILABLE_MODELS = [
-  { id: 'deepseek/deepseek-chat-v3-0324', name: 'DeepSeek V3 (推荐)', description: '性价比最高' },
-  { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4', description: '高质量对话' },
-  { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', description: '快速响应' },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: '快速便宜' },
-  { id: 'openai/gpt-4o', name: 'GPT-4o', description: '综合能力强' },
-  { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', description: '快速' },
-  { id: 'google/gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro', description: '高质量' },
+  { id: 'deepseek/deepseek-chat-v3-0324', name: 'DeepSeek V3', description: '性价比最高，推荐' },
+  { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B', description: '中文能力强' },
+  { id: 'meta-llama/llama-4-maverick', name: 'Llama 4 Maverick', description: 'Meta 最新，综合强' },
+  { id: 'cohere/command-a', name: 'Cohere Command A', description: '工具调用稳定' },
+  { id: 'mistralai/mistral-small-3.1-24b-instruct', name: 'Mistral Small 3.1', description: '快速响应' },
+  { id: 'deepseek/deepseek-chat', name: 'DeepSeek Chat', description: '经典版' },
 ]
 
 const SYSTEM_PROMPT = `你是"小林"，用户的私人社交助理。
