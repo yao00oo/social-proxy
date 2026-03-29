@@ -18,7 +18,7 @@ import {
   insertUnifiedMessage,
   buildSenderNameCache,
 } from '@/lib/sync-helpers'
-import { generateSummaries } from '@/lib/summarize'
+import { generateSummaries, generateSummaryForThread } from '@/lib/summarize'
 import https from 'https'
 
 // ── Module-level state ──
@@ -661,6 +661,11 @@ async function fullSync(userId: string) {
           }
 
           log(`    -> 导入 ${chatImported} 条新消息${msgs.length >= 200 ? '（还有更多新消息）' : ''}`)
+
+          // 每个群同步完立即生成摘要（异步，不阻塞）
+          if (chatImported >= 5) {
+            generateSummaryForThread(userId, thread.id, chat.name).catch(() => {})
+          }
         }
 
         // ── 阶段 2：回填历史消息（如果还有时间和 API 额度） ──
@@ -743,12 +748,7 @@ async function fullSync(userId: string) {
   lastResult = result
   syncRunning = false
 
-  // After sync complete, trigger AI summarization
-  if (result.imported > 0) {
-    await generateSummaries(userId).catch((err) =>
-      console.error('[feishu-sync] summarize error:', err.message)
-    )
-  }
+  // 摘要已在每个群同步后立即生成，不再在这里全量跑
 
   // Determine final status
   let finalStatus = 'completed'

@@ -177,3 +177,71 @@ ${formatted}
   console.log(`[summarize] Done. Generated ${generated} summaries.`)
   return generated
 }
+
+/**
+ * 给单个 thread 生成摘要（同步完一个群就调一次）
+ * 条件：>= 5 条消息 且 (没有摘要 或 消息数比上次多 10+)
+ */
+export async function generateSummaryForThread(userId: string, threadId: number, threadName: string): Promise<boolean> {
+  const countRow = await queryOne<{ msg_count: number; existing_count: number | null }>(
+    `SELECT COUNT(*)::int as msg_count,
+       (SELECT message_count FROM summaries WHERE user_id = ? AND thread_id = ?) as existing_count
+     FROM messages WHERE user_id = ? AND thread_id = ?`,
+    [userId, threadId, userId, threadId],
+  )
+
+  const msgCount = countRow?.msg_count || 0
+  const existingCount = countRow?.existing_count ?? null
+
+  // 不够条件
+  if (msgCount < 5) return false
+  if (existingCount !== null && existingCount !== undefined && msgCount <= existingCount + 10) return false
+
+  const messages = await query<MessageRow>(
+    `SELECT timestamp, sender_name, content, direction
+     FROM messages WHERE user_id = ? AND thread_id = ?
+     ORDER BY timestamp DESC LIMIT 100`,
+    [userId, threadId],
+  )
+  if (messages.length === 0) return false
+
+  messages.reverse()
+  const startTime = messages[0].timestamp
+  const endTime = messages[messages.length - 1].timestamp
+
+  const formatted = messages.map(m => {
+    const time = m.timestamp ? m.timestamp.replace('T', ' ').slice(0, 19) : '?'
+    const sender = m.sender_name || (m.direction === 'sent' ? '我' : '对方')
+    return `[${time} ${sender}] ${m.content}`
+  }).join('\n')
+
+  const prompt = `你是一个社交关系分析助手。请对以下聊天记录生成简洁的摘要。
+
+会话：${threadName}
+消息数：${msgCount}
+时间范围：${startTime} ~ ${endTime}
+
+聊天记录：
+${formatted}
+
+请用中文生成摘要，包含：
+1. 主要讨论话题（2-3个）
+2. 关键结论或待办事项
+3. 关系描述（如果能判断的话）
+
+摘要控制在200字以内。`
+
+  const summary = await callAI(prompt)
+  if (!summary) return false
+
+  await exec(
+    `INSERT INTO summaries (user_id, thread_id, summary, start_time, end_time, message_count, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, NOW())
+     ON CONFLICT (user_id, thread_id) DO UPDATE SET
+       summary = EXCLUDED.summary, start_time = EXCLUDED.start_time,
+       end_time = EXCLUDED.end_time, message_count = EXCLUDED.message_count, updated_at = NOW()`,
+    [userId, threadId, summary, startTime, endTime, msgCount],
+  )
+
+  return true
+}
