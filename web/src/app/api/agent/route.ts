@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
         return { role: m.role, content: text || m.content || '' }
       }
       return { role: m.role, content: m.content || '' }
-    }).filter((m: any) => m.content)
+    }).filter((m: any) => m.role === 'tool' || m.content) // 不要过滤掉 tool 消息
   }
 
   if (!messages || messages.length === 0) {

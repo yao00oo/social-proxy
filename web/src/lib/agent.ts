@@ -1,5 +1,5 @@
 // 小林 Agent — Vercel AI SDK v6 tool-use agent loop
-import { streamText, stepCountIs } from 'ai'
+import { streamText, stepCountIs, tool } from 'ai'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { z } from 'zod'
 import { query, queryOne, exec } from './db'
@@ -720,7 +720,12 @@ export async function runAgent(userId: string, messages: Array<{ role: string; c
       userSkills.map(s => `- **${s.name}**: ${s.description || '无描述'}`).join('\n')
   }
 
-  const tools = createTools(userId)
+  const rawTools = createTools(userId)
+  // 用 AI SDK 的 tool() 包装每个工具
+  const tools: Record<string, any> = {}
+  for (const [name, def] of Object.entries(rawTools)) {
+    tools[name] = tool(def as any)
+  }
   const model = modelId || process.env.AGENT_MODEL || DEFAULT_MODEL
   return streamText({
     model: openrouter(model),
