@@ -48,20 +48,20 @@ export async function POST(req: NextRequest) {
         for await (const event of result.fullStream) {
           switch (event.type) {
             case 'tool-call': {
-              const toolEvent = { type: 'tool_call', name: event.toolName, args: (event as any).input ?? (event as any).args ?? {} }
+              const toolEvent = { type: 'tool_call', name: event.toolName, args: (event as any).input ?? {} }
               controller.enqueue(encoder.encode(`\n@@TOOL:${JSON.stringify(toolEvent)}@@\n`))
               break
             }
             case 'tool-result': {
-              const resultEvent = { type: 'tool_result', name: event.toolName, result: (event as any).result ?? (event as any).output ?? {} }
+              const resultEvent = { type: 'tool_result', name: event.toolName, result: (event as any).output ?? {} }
               controller.enqueue(encoder.encode(`\n@@RESULT:${JSON.stringify(resultEvent)}@@\n`))
               break
             }
             case 'text-delta': {
-              controller.enqueue(encoder.encode((event as any).textDelta ?? (event as any).text ?? ''))
+              controller.enqueue(encoder.encode((event as any).text ?? ''))
               break
             }
-            // step-start, step-finish, etc. — skip
+            // start, start-step, finish-step, finish, etc. — skip
           }
         }
       } catch (err: any) {
