@@ -372,11 +372,20 @@ function createTools(userId: string): Record<string, any> {
       const feishuUserId = feishuUserRow?.value
       if (!feishuUserId) return { tasks: [], message: '未设置飞书用户ID，无法查询审批' }
 
-      const tokenRow = await queryOne<{ value: string }>("SELECT value FROM settings WHERE key = 'feishu_user_access_token' AND user_id = ?", [userId])
-      const token = tokenRow?.value
-      if (!token) return { tasks: [], message: '飞书未授权，无法查询审批' }
+      // 审批 API 需要 tenant_access_token（应用身份），不是 user_access_token
+      const appId = process.env.FEISHU_APP_ID || (await queryOne<{ value: string }>("SELECT value FROM settings WHERE key = 'feishu_app_id' AND user_id = ?", [userId]))?.value
+      const appSecret = process.env.FEISHU_APP_SECRET || (await queryOne<{ value: string }>("SELECT value FROM settings WHERE key = 'feishu_app_secret' AND user_id = ?", [userId]))?.value
+      if (!appId || !appSecret) return { tasks: [], message: '未配置飞书应用凭证' }
 
       try {
+        const tokenRes = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+        })
+        const tokenData = await tokenRes.json()
+        if (!tokenData.tenant_access_token) return { tasks: [], message: '获取应用 token 失败' }
+
         const params = new URLSearchParams({
           user_id: feishuUserId,
           user_id_type: 'open_id',
@@ -384,7 +393,7 @@ function createTools(userId: string): Record<string, any> {
           page_size: Math.min(limit ?? 20, 200).toString(),
         })
         const res = await fetch(`https://open.feishu.cn/open-apis/approval/v4/tasks/query?${params}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${tokenData.tenant_access_token}` },
         })
         const data = await res.json()
         if (data.code !== 0) return { tasks: [], message: `查询失败: ${data.msg}` }
