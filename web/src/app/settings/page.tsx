@@ -189,6 +189,7 @@ const FEISHU_PERMISSIONS = [
   { name: 'contact:contact:readonly', desc: '读取通讯录' },
   { name: 'drive:drive:readonly', desc: '读取云文档' },
   { name: 'docx:document:readonly', desc: '读取文档内容' },
+  { name: 'approval:approval:readonly', desc: '读取审批' },
 ]
 
 const FEISHU_STEPS = [
