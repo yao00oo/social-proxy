@@ -732,6 +732,7 @@ export async function runAgent(userId: string, messages: Array<{ role: string; c
     system: SYSTEM_PROMPT + skillPrompt,
     messages: messages as any,
     tools,
-    stopWhen: stepCountIs(10),
+    toolChoice: 'auto',
+    stopWhen: stepCountIs(5),
   })
 }

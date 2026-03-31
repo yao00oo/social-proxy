@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
         return { role: m.role, content: text || m.content || '' }
       }
       return { role: m.role, content: m.content || '' }
-    }).filter((m: any) => m.role === 'tool' || m.content) // 不要过滤掉 tool 消息
+    }).filter((m: any) => m.role === 'tool' || m.content)
   }
 
   if (!messages || messages.length === 0) {
@@ -44,7 +44,6 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       try {
-        // Use the fullStream which yields events as they happen
         for await (const event of result.fullStream) {
           switch (event.type) {
             case 'tool-call': {
@@ -61,7 +60,6 @@ export async function POST(req: NextRequest) {
               controller.enqueue(encoder.encode((event as any).text ?? ''))
               break
             }
-            // start, start-step, finish-step, finish, etc. — skip
           }
         }
       } catch (err: any) {

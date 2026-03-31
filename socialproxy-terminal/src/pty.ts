@@ -1,13 +1,9 @@
-// PTY Shell 管理器 — 持久伪终端，缓冲输出
+// 持久 Shell — 用 child_process.spawn 替代 node-pty（兼容性更好）
 import * as os from 'os'
-import * as pty from 'node-pty'
+import { spawn, ChildProcess } from 'child_process'
 
-// ANSI 转义码正则
 const ANSI_RE = /\x1B(?:\[[0-9;]*[a-zA-Z]|\].*?\x07|\(B)/g
-
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, '')
-}
+function stripAnsi(s: string): string { return s.replace(ANSI_RE, '') }
 
 export interface PtyShellOptions {
   onFlush: (output: string) => Promise<void>
@@ -15,7 +11,7 @@ export interface PtyShellOptions {
 }
 
 export class PtyShell {
-  private proc: pty.IPty
+  private proc: ChildProcess
   private buffer = ''
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private maxTimer: ReturnType<typeof setTimeout> | null = null
@@ -23,46 +19,44 @@ export class PtyShell {
   private onExitCb?: (code: number, signal: number) => void
   private dead = false
 
-  // 缓冲参数
-  private static IDLE_MS = 300    // 无新输出 300ms 后 flush
-  private static MAX_MS = 5000    // 最长 5 秒必须 flush
-  private static MAX_BUF = 8000   // 缓冲超过 8KB 立即 flush
+  private static IDLE_MS = 500
+  private static MAX_MS = 5000
+  private static MAX_BUF = 8000
 
   constructor(opts: PtyShellOptions) {
     this.onFlush = opts.onFlush
     this.onExitCb = opts.onExit
 
-    const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash')
-    this.proc = pty.spawn(shell, [], {
-      name: 'dumb',     // TERM=dumb，减少 ANSI 转义
-      cols: 120,
-      rows: 30,
+    const shell = process.env.SHELL || '/bin/bash'
+    this.proc = spawn(shell, ['-i'], {
       cwd: os.homedir(),
-      env: { ...process.env, TERM: 'dumb' } as { [key: string]: string },
+      env: { ...process.env, TERM: 'dumb', PS1: '$ ' },
+      stdio: ['pipe', 'pipe', 'pipe'],
     })
 
-    this.proc.onData((data: string) => {
-      this.buffer += data
+    this.proc.stdout?.on('data', (data: Buffer) => {
+      this.buffer += data.toString()
       this.resetIdleTimer()
-
-      // 缓冲超限立即 flush
-      if (this.buffer.length >= PtyShell.MAX_BUF) {
-        this.flush()
-      }
+      if (this.buffer.length >= PtyShell.MAX_BUF) this.flush()
     })
 
-    this.proc.onExit(({ exitCode, signal }) => {
+    this.proc.stderr?.on('data', (data: Buffer) => {
+      this.buffer += data.toString()
+      this.resetIdleTimer()
+      if (this.buffer.length >= PtyShell.MAX_BUF) this.flush()
+    })
+
+    this.proc.on('exit', (code, signal) => {
       this.dead = true
-      this.flush() // flush 残余
-      this.onExitCb?.(exitCode ?? 0, signal ?? 0)
+      this.flush()
+      this.onExitCb?.(code ?? 0, typeof signal === 'number' ? signal : 0)
     })
   }
 
   write(command: string) {
     if (this.dead) return
-    this.proc.write(command + '\r')
+    this.proc.stdin?.write(command + '\n')
 
-    // 启动 max timer（命令开始后最长 5 秒必须 flush 一次）
     if (!this.maxTimer) {
       this.maxTimer = setTimeout(() => {
         this.maxTimer = null
@@ -100,13 +94,9 @@ export class PtyShell {
     const raw = this.buffer
     this.buffer = ''
 
-    // 清理 ANSI 转义码，截断过长输出
     let clean = stripAnsi(raw).trim()
     if (!clean) return
-
-    if (clean.length > 8000) {
-      clean = clean.slice(0, 8000) + '\n...(输出已截断)'
-    }
+    if (clean.length > 8000) clean = clean.slice(0, 8000) + '\n...(已截断)'
 
     this.onFlush(clean).catch(() => {})
   }

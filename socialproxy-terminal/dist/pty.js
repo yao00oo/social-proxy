@@ -34,14 +34,11 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PtyShell = void 0;
-// PTY Shell 管理器 — 持久伪终端，缓冲输出
+// 持久 Shell — 用 child_process.spawn 替代 node-pty（兼容性更好）
 const os = __importStar(require("os"));
-const pty = __importStar(require("node-pty"));
-// ANSI 转义码正则
+const child_process_1 = require("child_process");
 const ANSI_RE = /\x1B(?:\[[0-9;]*[a-zA-Z]|\].*?\x07|\(B)/g;
-function stripAnsi(s) {
-    return s.replace(ANSI_RE, '');
-}
+function stripAnsi(s) { return s.replace(ANSI_RE, ''); }
 class PtyShell {
     constructor(opts) {
         this.buffer = '';
@@ -50,33 +47,34 @@ class PtyShell {
         this.dead = false;
         this.onFlush = opts.onFlush;
         this.onExitCb = opts.onExit;
-        const shell = os.platform() === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
-        this.proc = pty.spawn(shell, [], {
-            name: 'dumb', // TERM=dumb，减少 ANSI 转义
-            cols: 120,
-            rows: 30,
+        const shell = process.env.SHELL || '/bin/bash';
+        this.proc = (0, child_process_1.spawn)(shell, ['-i'], {
             cwd: os.homedir(),
-            env: { ...process.env, TERM: 'dumb' },
+            env: { ...process.env, TERM: 'dumb', PS1: '$ ' },
+            stdio: ['pipe', 'pipe', 'pipe'],
         });
-        this.proc.onData((data) => {
-            this.buffer += data;
+        this.proc.stdout?.on('data', (data) => {
+            this.buffer += data.toString();
             this.resetIdleTimer();
-            // 缓冲超限立即 flush
-            if (this.buffer.length >= PtyShell.MAX_BUF) {
+            if (this.buffer.length >= PtyShell.MAX_BUF)
                 this.flush();
-            }
         });
-        this.proc.onExit(({ exitCode, signal }) => {
+        this.proc.stderr?.on('data', (data) => {
+            this.buffer += data.toString();
+            this.resetIdleTimer();
+            if (this.buffer.length >= PtyShell.MAX_BUF)
+                this.flush();
+        });
+        this.proc.on('exit', (code, signal) => {
             this.dead = true;
-            this.flush(); // flush 残余
-            this.onExitCb?.(exitCode ?? 0, signal ?? 0);
+            this.flush();
+            this.onExitCb?.(code ?? 0, typeof signal === 'number' ? signal : 0);
         });
     }
     write(command) {
         if (this.dead)
             return;
-        this.proc.write(command + '\r');
-        // 启动 max timer（命令开始后最长 5 秒必须 flush 一次）
+        this.proc.stdin?.write(command + '\n');
         if (!this.maxTimer) {
             this.maxTimer = setTimeout(() => {
                 this.maxTimer = null;
@@ -119,18 +117,15 @@ class PtyShell {
             return;
         const raw = this.buffer;
         this.buffer = '';
-        // 清理 ANSI 转义码，截断过长输出
         let clean = stripAnsi(raw).trim();
         if (!clean)
             return;
-        if (clean.length > 8000) {
-            clean = clean.slice(0, 8000) + '\n...(输出已截断)';
-        }
+        if (clean.length > 8000)
+            clean = clean.slice(0, 8000) + '\n...(已截断)';
         this.onFlush(clean).catch(() => { });
     }
 }
 exports.PtyShell = PtyShell;
-// 缓冲参数
-PtyShell.IDLE_MS = 300; // 无新输出 300ms 后 flush
-PtyShell.MAX_MS = 5000; // 最长 5 秒必须 flush
-PtyShell.MAX_BUF = 8000; // 缓冲超过 8KB 立即 flush
+PtyShell.IDLE_MS = 500;
+PtyShell.MAX_MS = 5000;
+PtyShell.MAX_BUF = 8000;
